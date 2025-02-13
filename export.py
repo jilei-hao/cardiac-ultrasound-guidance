@@ -9,7 +9,7 @@ import tkinter as tk
 # Configuration
 SAVE_FOLDER = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/output/250129/loop7"  # Folder to save images
 FRAME_INTERVAL = 0.05  # Capture interval in seconds (e.g., 0.5s = 500ms)
-DURATION = 3  # Set to None for infinite capture, or specify total seconds
+DURATION = 60  # Set to None for infinite capture, or specify total seconds
 
 # Ensure save directory exists
 if not os.path.exists(SAVE_FOLDER):
@@ -17,14 +17,13 @@ if not os.path.exists(SAVE_FOLDER):
 
 # Define screen region to capture (Adjust based on scrcpy window position)
 monitor = {
-    "top": 60,  # Adjust based on your screen
-    "left": 45,  # Adjust based on your screen
-    "width": 450,  # Set width of scrcpy window
-    "height": 650,  # Set height of scrcpy window
+  "top": 60,  # Adjust based on your screen
+  "left": 45,  # Adjust based on your screen
+  "width": 450,  # Set width of scrcpy window
+  "height": 650,  # Set height of scrcpy window
 }
 
 print(f"🎥 Capturing frames every {FRAME_INTERVAL} seconds...")
-
 
 
 # cv2.namedWindow("Screen Capture", cv2.WINDOW_NORMAL)
@@ -35,6 +34,14 @@ print(f"🎥 Capturing frames every {FRAME_INTERVAL} seconds...")
 
 start_time = time.time()
 frame_count = 0
+
+# create a tkinter window
+root = tk.Tk()
+root.title("Capture")
+
+# create a label to show the image
+label = tk.Label(root)
+label.pack()
 
 with mss.mss() as sct:
   # get the initial time stamp
@@ -57,13 +64,25 @@ with mss.mss() as sct:
       
       # filename print diff with 8 digits
       filename = os.path.join(SAVE_FOLDER, f"{diff:08d}.png")
-      cv2.imwrite(filename, frame)
+      # cv2.imwrite(filename, frame)
       print(f"✅ Saved: {filename}")
 
       # render frame on screen
       # cv2.imshow("Screen Capture", frame)
 
       frame_count += 1
+
+      # convert to PIL image
+      img = Image.fromarray(frame)
+      img_tk = ImageTk.PhotoImage(img)
+
+      # update the label
+      label.config(image=img_tk)
+      label.image = img_tk
+
+      # update the tkinter window
+      root.update_idletasks()
+      root.update()
 
       # img = Image.fromarray(frame)
       # img.show()
