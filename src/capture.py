@@ -7,6 +7,8 @@ from PIL import Image, ImageTk
 import tkinter as tk
 import macos_window_helpers as mwh
 import landmark_prediction as lp
+import pose_classification as pc
+import image_helpers as ih
 
 def run_capture(options):
   # Get the bounding box of the specified window
@@ -47,7 +49,10 @@ def run_capture(options):
       timestamp = int(start_time * 1000)
       frame_count = 0
 
-      model, device = lp.configure_torch()
+      landmark_model, device = lp.configure_torch()
+      classifier_model, preprocess = pc.load_pretrained_model(device)
+
+      crnt_classifier_result = (255, 255, 255)
 
       while True:
         # Capture screen
@@ -87,7 +92,18 @@ def run_capture(options):
         ################################################################
         # result_frame = lp.predict_landmark(frame)
 
-        result_frame = lp.run_core_prediction(model, device, frame)
+        result_frame, cla= lp.run_core_prediction(landmark_model, device, frame)
+        
+
+        if (frame_count % 3 == 0):
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, frame, preprocess)
+          crnt_classifier_result = cla
+          # print(cla)
+        
+        result_frame = ih.add_rgb_frame_to_result(result_frame, crnt_classifier_result)
+
+        print("classifier result: ", crnt_classifier_result)
+
 
         ################################################################
         # result_frame = frame

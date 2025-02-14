@@ -145,7 +145,7 @@ def run_core_prediction(model, device, input_frame):
 
     # Convert grayscale to BGR for overlays
     overlay_img = cv2.cvtColor(input_frame, cv2.COLOR_GRAY2BGR)
-    # valid_landmarks = 0
+    valid_landmarks = 0
     
     for c in range(probs_np.shape[0]):
       heatmap_c = probs_np[c]
@@ -158,20 +158,27 @@ def run_core_prediction(model, device, input_frame):
  
 
       # draw only if ERE <= threshold
-      ere_threshold = 1.5
+      ere_threshold = 2
       if ere_val <= ere_threshold:
           fixed_radius = 1
           color = get_color_for_ere(ere_val)
           cv2.circle(overlay_img, (x, y), fixed_radius, color,-1)
-        #   valid_landmarks += 1
-
-
+          valid_landmarks += 1
+        
+        
       
-      # landmark_counts.append(valid_landmarks)
+    #   landmark_counts.append(valid_landmarks)
+      cla = (255, 255, 255)
+      if valid_landmarks > 25:
+          cla = (0, 255, 0)
+      elif valid_landmarks > 15:
+          cla = (255, 255, 0)
+      else:
+          cla = (255, 0, 0)
 
         ## of valid landmarks at top-left
     #   cv2.putText(overlay_img, f"{valid_landmarks}", (5,12),
     #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
 
   
-    return overlay_img
+    return overlay_img, cla
