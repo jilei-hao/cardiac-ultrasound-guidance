@@ -47,6 +47,8 @@ def run_capture(options):
       timestamp = int(start_time * 1000)
       frame_count = 0
 
+      model, device = lp.configure_torch()
+
       while True:
         # Capture screen
         screenshot = sct.grab(monitor)
@@ -83,10 +85,12 @@ def run_capture(options):
         ################################################################
         # Real-time Inference Goes Here
         ################################################################
-        result_frame = lp.predict_landmark(frame)
+        # result_frame = lp.predict_landmark(frame)
+
+        result_frame = lp.run_core_prediction(model, device, frame)
 
         ################################################################
-
+        # result_frame = frame
         # resample the result to 512 x 512
         result_frame = cv2.resize(result_frame, (512, 512), interpolation=cv2.INTER_AREA)
 
