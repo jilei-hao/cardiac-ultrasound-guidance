@@ -6,6 +6,7 @@ import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
 import macos_window_helpers as mwh
+import landmark_prediction as lp
 
 def run_capture(options):
   # Get the bounding box of the specified window
@@ -53,7 +54,19 @@ def run_capture(options):
         # Convert to OpenCV format
         frame = np.array(screenshot)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)  # Convert from BGRA to Grayscale
-        
+
+        # crop to a largest square from the center
+        h, w = frame.shape
+        pad = int(min(h, w) * 0.1)
+        if h > w:
+          diff = (h - w) // 2
+          frame = frame[diff + pad:diff+w - pad, pad : w - pad]
+        elif w > h:
+          diff = (w - h) // 2
+          frame = frame[:, diff:diff+h]
+
+        # resample to 112 x 112
+        frame = cv2.resize(frame, (112, 112), interpolation=cv2.INTER_AREA)
 
         if options.save:
           # Save frame as PNG
@@ -66,9 +79,21 @@ def run_capture(options):
           print(f"✅ Saved: {filename}")
 
 
+
+        ################################################################
+        # Real-time Inference Goes Here
+        ################################################################
+        result_frame = lp.predict_landmark(frame)
+
+        ################################################################
+
+        # resample the result to 512 x 512
+        result_frame = cv2.resize(result_frame, (512, 512), interpolation=cv2.INTER_AREA)
+
+
         if options.render:
           # convert to PIL image
-          img = Image.fromarray(frame)
+          img = Image.fromarray(result_frame)
           img_tk = ImageTk.PhotoImage(img)
 
           # update the label
