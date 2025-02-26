@@ -45,14 +45,14 @@ def run_capture(options):
   with mss.mss() as sct:
   # get the initial time stamp
     try:
-      start_time = time.time()
-      timestamp = int(start_time * 1000)
-      frame_count = 0
-
       landmark_model, device = lp.configure_torch()
       classifier_model, preprocess = pc.load_pretrained_model(device)
 
       crnt_classifier_result = (255, 255, 255)
+
+      start_time = time.time()
+      timestamp = int(start_time * 1000)
+      frame_count = 0
 
       while True:
         # Capture screen
@@ -126,6 +126,8 @@ def run_capture(options):
 
 
         frame_count += 1
+
+        print("avg fps: ", frame_count / (time.time() - start_time))
 
         # Wait for the specified interval
         time.sleep(options.frame_interval)
