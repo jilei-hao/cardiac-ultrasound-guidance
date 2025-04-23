@@ -8,7 +8,7 @@ def load_pretrained_model(device):
     num_ftrs = model.fc.in_features
     model.fc = torch.nn.Linear(num_ftrs, 3)  # Adjust output layer
     # load fine-tuned weights
-    fine_tuned_weights = torch.load('/Users/aarongzy/Programming/Penn/PICSL/github_repo/lumify_streaming/weights/resnet18_multiclass_tuned.pth',
+    fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth',
                                     map_location=device)
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()

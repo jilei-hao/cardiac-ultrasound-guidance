@@ -71,7 +71,7 @@ def predict_landmark(input_frame, ere_threshold=1.5):
     model = ResNet34UNet(num_landmarks=42)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "/Users/aarongzy/Programming/Penn/PICSL/github_repo/lumify_streaming/weights/bigger_net_final.pth"
+    model_path = "weights/bigger_net_final.pth"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
@@ -124,7 +124,7 @@ def configure_torch():
     model = ResNet34UNet(num_landmarks=42)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "/Users/aarongzy/Programming/Penn/PICSL/github_repo/lumify_streaming/weights/bigger_net_final.pth"
+    model_path = "weights/bigger_net_final.pth"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
