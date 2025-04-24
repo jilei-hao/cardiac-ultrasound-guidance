@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from torchvision.models import resnet18, ResNet18_Weights
+import matplotlib.pyplot as plt
 
 def load_pretrained_model(device):
     model = resnet18()
@@ -30,6 +31,19 @@ def run_pose_classifier(model, device, input_image, transform):
     # image = transform(image)
     # # add a 1 to the 0th dimension
     # image = image.unsqueeze(0)
+
+    # # ------ checking orientation of image passed to classifier ------
+    # # Convert grayscale to 3-channel tensor
+    # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
+    # image = image.unsqueeze(0).to(device)
+
+    # # Visual check
+    # np_img = image.squeeze().permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+    # plt.imshow(np_img)
+    # plt.title("Image passed to model")
+    # plt.show()
+
+
     
     image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
     image = image.unsqueeze(0).to(device)
