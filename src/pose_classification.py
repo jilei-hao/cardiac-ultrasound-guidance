@@ -8,9 +8,11 @@ def load_pretrained_model(device):
     model = resnet18()
     num_ftrs = model.fc.in_features
     model.fc = torch.nn.Linear(num_ftrs, 3)  # Adjust output layer
+    # change first layer to take 1 channel
+    # model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     # load fine-tuned weights
-    fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth',
-                                    map_location=device)
+    fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth', map_location=device)
+    # fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned_new.pth', map_location=device)
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()
     return model, preprocess
