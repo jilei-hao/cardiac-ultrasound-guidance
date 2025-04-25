@@ -71,7 +71,7 @@ def predict_landmark(input_frame, ere_threshold=1.5):
     model = ResNet34UNet(num_landmarks=42)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "weights/bigger_net_final.pth"
+    model_path = "weights/47marks_partial_022125_best.pth"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
@@ -121,10 +121,10 @@ def predict_landmark(input_frame, ere_threshold=1.5):
 
 def configure_torch():
 
-    model = ResNet34UNet(num_landmarks=42)
+    model = ResNet34UNet(num_landmarks=47)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "weights/bigger_net_final.pth"
+    model_path = "weights/47marks_partial_022125_best.pth"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
@@ -158,7 +158,7 @@ def run_core_prediction(model, device, input_frame):
  
 
       # draw only if ERE <= threshold
-      ere_threshold = 2
+      ere_threshold = 6
       if ere_val <= ere_threshold:
           fixed_radius = 1
           color = get_color_for_ere(ere_val)
