@@ -13,20 +13,22 @@ SHARED_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "GreenYellowRed",
     [
         (0.0, "green"),
-        (0.4, "green"),
-        (0.7, "yellow"),
-        (0.9, "red"),
+        (0.3, "green"),
+        (0.4, "yellow"),
+        (0.6, "yellow"),
+        (0.7, "red"),
         (1.0, "red")
     ]
 )
 
-def get_color_for_ere(ere):
-
-    # Normalize the ERE value to the range [0, 1]
-    normalized = ere / 1.8
-    normalized = min(max(normalized, 0), 1)  # Clamp between 0 and 1
+def get_color_for_ere(ere, max_ere):
+    # Normalize the ERE value: 0 (best) to max_ere (worst)
+    normalized = ere / max_ere
+    normalized = min(max(normalized, 0), 1)  # Clamp between [0, 1]
 
     r, g, b, a = SHARED_CMAP(normalized)
+    # Debug print
+    print(f"normalized: {normalized:.3f}, ere: {ere:.3f}")
 
     return (int(r * 255), int(g * 255), int(b * 255))
 
@@ -104,7 +106,7 @@ def predict_landmark(input_frame, ere_threshold=1.5):
       # draw only if ERE <= threshold
       if ere_val <= ere_threshold:
           fixed_radius = 1
-          color = get_color_for_ere(ere_val)
+          color = get_color_for_ere(ere_val, max_ere=ere_threshold/1.5)
           cv2.circle(overlay_img, (x, y), fixed_radius, color,-1)
         #   valid_landmarks += 1
 
@@ -164,7 +166,9 @@ def run_core_prediction(model, device, input_frame):
       ere_threshold = 6
       if ere_val <= ere_threshold:
           fixed_radius = 1
-          color = get_color_for_ere(ere_val)
+          if c in [42, 45, 46]:
+            ere_val = ere_val / 3
+          color = get_color_for_ere(ere_val, max_ere=ere_threshold)
           cv2.circle(overlay_img, (x, y), fixed_radius, color,-1)
           valid_landmarks += 1
     # return landmark coords and ere as tensor
