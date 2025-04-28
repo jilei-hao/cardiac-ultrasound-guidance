@@ -35,19 +35,19 @@ def run_pose_classifier(model, device, input_image, landmarks, transform):
     # # add a 1 to the 0th dimension
     # image = image.unsqueeze(0)
 
-    # ------ checking orientation of image passed to classifier ------
-    # Convert grayscale to 3-channel tensor
-    plot_landmarks_instead_of_echo = True
-    if plot_landmarks_instead_of_echo:
-        image = landmarks_image.unsqueeze(0).float()
-    else:
-        image = torch.from_numpy(input_image).unsqueeze(0).float()
-    image = image.unsqueeze(0).to(device)
-    # Visual check
-    np_img = image.squeeze().cpu().numpy()
-    plt.imshow(np_img, cmap='gray')
-    plt.title("Image passed to model")
-    plt.show()
+    # # ------ checking orientation of image passed to classifier ------
+    # # Convert grayscale to 3-channel tensor
+    # plot_landmarks_instead_of_echo = True
+    # if plot_landmarks_instead_of_echo:
+    #     image = landmarks_image.unsqueeze(0).float()
+    # else:
+    #     image = torch.from_numpy(input_image).unsqueeze(0).float()
+    # image = image.unsqueeze(0).to(device)
+    # # Visual check
+    # np_img = image.squeeze().cpu().numpy()
+    # plt.imshow(np_img, cmap='gray')
+    # plt.title("Image passed to model")
+    # plt.show()
 
 
     
@@ -77,27 +77,6 @@ def num_to_rgb(numerical_prediction, num_classes=3):
         # print("green")
         return (0, 255, 0)
     
-
-# def plot_landmarks_as_images(landmarks):
-#     # return a 112x112 image with landmarks as a grayscale image
-#     device = landmarks.device
-#     image_size = (112, 112)
-#     image = torch.zeros(image_size, device=device)
-#     landmarks_x = landmarks[:, 0]
-#     landmarks_y = landmarks[:, 1]
-#     landmarks_ere = landmarks[:, 2]
-
-#     # create coord grid
-#     y = torch.arange(0, image_size[0], device=device).unsqueeze(1)
-#     x = torch.arange(0, image_size[1], device=device).unsqueeze(0)
-#     # plot each landmark
-#     for i in range(landmarks_x.shape[0]):
-#         sigma = 10 / landmarks_ere[i]
-#         blob = torch.exp(-((x - landmarks_x[i])**2 + (y - landmarks_y[i])**2) / (2 * sigma**2))
-#         image += blob
-#     # normalize image
-#     image = image / torch.max(image) * 255
-#     return image
 
 def plot_landmarks_as_images(landmarks, image_size=(112, 112), use_less_landmarks=True):
     device = landmarks.device
