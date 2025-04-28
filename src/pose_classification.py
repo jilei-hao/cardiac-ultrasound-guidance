@@ -18,13 +18,14 @@ def load_pretrained_model(device):
     return model, preprocess
 
 
-def run_pose_classifier(model, device, input_image, transform):
+def run_pose_classifier(model, device, input_image, landmarks, transform):
     model = model.to(device)
     model.eval()
     # input_image is a np array
     # Convert to tensor
     # image = torch.tensor(input_image)
     
+    landmarks_image = plot_landmarks_as_images(landmarks)
     # apply pytorch transform to the image
     # image = (image - torch.min(image)) / (torch.max(image) - torch.min(image))
     # image = torch.stack((image, image, image), dim=2)
@@ -36,7 +37,8 @@ def run_pose_classifier(model, device, input_image, transform):
 
     # # ------ checking orientation of image passed to classifier ------
     # # Convert grayscale to 3-channel tensor
-    # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
+    # # image = torch.from_numpy(landmarks_image).unsqueeze(0).repeat(3,1,1).float()
+    # image = landmarks_image.unsqueeze(0).repeat(3,1,1).float()
     # image = image.unsqueeze(0).to(device)
     # # Visual check
     # np_img = image.squeeze().permute(1, 2, 0).cpu().numpy().astype(np.uint8)
@@ -61,38 +63,66 @@ def run_pose_classifier(model, device, input_image, transform):
 
 
 def num_to_rgb(numerical_prediction, num_classes=3):
-    print(numerical_prediction)
     numerical_prediction = _regression_to_num_classes(numerical_prediction)
     if numerical_prediction == -1:
-        print("red")
+        # print("red")
         return (255, 0 ,0)
     elif numerical_prediction == 0:
-        print("yellow")
+        # print("yellow")
         return (255, 255, 0)
     elif numerical_prediction == 1:
-        print("green")
+        # print("green")
         return (0, 255, 0)
     
 
-def plot_landmarks_as_images(landmarks):
-    # return a 112x112 image with landmarks as a grayscale image
+# def plot_landmarks_as_images(landmarks):
+#     # return a 112x112 image with landmarks as a grayscale image
+#     device = landmarks.device
+#     image_size = (112, 112)
+#     image = torch.zeros(image_size, device=device)
+#     landmarks_x = landmarks[:, 0]
+#     landmarks_y = landmarks[:, 1]
+#     landmarks_ere = landmarks[:, 2]
+
+#     # create coord grid
+#     y = torch.arange(0, image_size[0], device=device).unsqueeze(1)
+#     x = torch.arange(0, image_size[1], device=device).unsqueeze(0)
+#     # plot each landmark
+#     for i in range(landmarks_x.shape[0]):
+#         sigma = 10 / landmarks_ere[i]
+#         blob = torch.exp(-((x - landmarks_x[i])**2 + (y - landmarks_y[i])**2) / (2 * sigma**2))
+#         image += blob
+#     # normalize image
+#     image = image / torch.max(image) * 255
+#     return image
+
+def plot_landmarks_as_images(landmarks, image_size=(112, 112)):
     device = landmarks.device
-    image_size = (112, 112)
     image = torch.zeros(image_size, device=device)
+
     landmarks_x = landmarks[:, 0]
     landmarks_y = landmarks[:, 1]
-    landmarks_ere = landmarks[:, 2]
+    landmarks_error = landmarks[:, 2]
 
-    # create coord grid
-    y = torch.arange(0, image_size[0], device=device).unsqueeze(1)
-    x = torch.arange(0, image_size[1], device=device).unsqueeze(0)
-    # plot each landmark
-    for i in range(landmarks_x.shape[0]):
-        sigma = 10 / landmarks_ere[i]
+    # create coordinate grid
+    x = torch.arange(image_size[1], device=device)
+    y = torch.arange(image_size[0], device=device)
+    x, y = torch.meshgrid(x, y, indexing='ij')  # (W, H) -> same as numpy meshgrid
+
+    for i in range(len(landmarks_x)):
+        sigma = 3 / landmarks_error[i]
         blob = torch.exp(-((x - landmarks_x[i])**2 + (y - landmarks_y[i])**2) / (2 * sigma**2))
         image += blob
-    # normalize image
+
+    # Normalize twice to [0, 1]
     image = image / torch.max(image)
+    image = image.float()
+    image = image / torch.max(image) * 255
+    # rotate 90 degrees clockwise
+    image = torch.rot90(image, -1, [0, 1])
+    # flip horizontally
+    image = torch.flip(image, [1])
+
     return image
 
 

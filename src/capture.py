@@ -96,7 +96,7 @@ def run_capture(options):
         
 
         if (frame_count % 3 == 0):
-          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, frame, preprocess)
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, frame, landmarks_tensor, preprocess)
           # # uncomment this to run prediction based on number of landmarks
           # crnt_classifier_result = cla
           # print(cla)
