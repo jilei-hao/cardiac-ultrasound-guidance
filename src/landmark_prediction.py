@@ -28,7 +28,7 @@ def get_color_for_ere(ere, max_ere):
 
     r, g, b, a = SHARED_CMAP(normalized)
     # Debug print
-    print(f"normalized: {normalized:.3f}, ere: {ere:.3f}")
+    # print(f"normalized: {normalized:.3f}, ere: {ere:.3f}")
 
     return (int(r * 255), int(g * 255), int(b * 255))
 
