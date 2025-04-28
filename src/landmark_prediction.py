@@ -28,7 +28,7 @@ def get_color_for_ere(ere, max_ere):
 
     r, g, b, a = SHARED_CMAP(normalized)
     # Debug print
-    print(f"normalized: {normalized:.3f}, ere: {ere:.3f}")
+    # print(f"normalized: {normalized:.3f}, ere: {ere:.3f}")
 
     return (int(r * 255), int(g * 255), int(b * 255))
 
@@ -107,7 +107,7 @@ def predict_landmark(input_frame, ere_threshold=1.5):
       if ere_val <= ere_threshold:
           fixed_radius = 1
           color = get_color_for_ere(ere_val, max_ere=ere_threshold/1.5)
-          cv2.circle(overlay_img, (x, y), fixed_radius, color,-1)
+          cv2.circle(overlay_img, (x, y), fixed_radius, color,2)
         #   valid_landmarks += 1
 
 
@@ -169,7 +169,7 @@ def run_core_prediction(model, device, input_frame):
           if c in [42, 45, 46]:
             ere_val = ere_val / 3
           color = get_color_for_ere(ere_val, max_ere=ere_threshold)
-          cv2.circle(overlay_img, (x, y), fixed_radius, color,-1)
+          cv2.circle(overlay_img, (x, y), fixed_radius, color,2)
           valid_landmarks += 1
     # return landmark coords and ere as tensor
       landmarks_tensor = torch.tensor([landmarks_x, landmarks_y, landmarks_ere]).T
@@ -190,3 +190,17 @@ def run_core_prediction(model, device, input_frame):
 
   
     return overlay_img, cla, landmarks_tensor
+
+def overlay_landmarks(vis_frame, landmarks_tensor, ere_threshold=6):
+    scale_x = vis_frame.shape[1] / 112
+    scale_y = vis_frame.shape[0] / 112
+
+    for lm in landmarks_tensor:
+        x, y, ere_val = lm
+        if ere_val <= ere_threshold:
+            color = get_color_for_ere(ere_val, max_ere=ere_threshold)
+            scaled_x = int(x.item() * scale_x)
+            scaled_y = int(y.item() * scale_y)
+            cv2.circle(vis_frame, (scaled_x, scaled_y), 5, color, -1)
+
+    return vis_frame
