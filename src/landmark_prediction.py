@@ -147,6 +147,7 @@ def run_core_prediction(model, device, input_frame):
     overlay_img = cv2.cvtColor(input_frame, cv2.COLOR_GRAY2BGR)
     valid_landmarks = 0
     
+    landmarks_x, landmarks_y, landmarks_ere = [], [], []
     for c in range(probs_np.shape[0]):
       heatmap_c = probs_np[c]
       idx = np.argmax(heatmap_c)
@@ -154,7 +155,9 @@ def run_core_prediction(model, device, input_frame):
       y, x = np.unravel_index(idx, (H, W))
 
       ere_val = compute_ere(heatmap_c, x, y, threshold=0.03)
-
+      landmarks_x.append(x)
+      landmarks_y.append(y)
+      landmarks_ere.append(ere_val)
  
 
       # draw only if ERE <= threshold
@@ -164,7 +167,8 @@ def run_core_prediction(model, device, input_frame):
           color = get_color_for_ere(ere_val)
           cv2.circle(overlay_img, (x, y), fixed_radius, color,-1)
           valid_landmarks += 1
-        
+    # return landmark coords and ere as tensor
+      landmarks_tensor = torch.tensor([landmarks_x, landmarks_y, landmarks_ere]).T
         
       
     #   landmark_counts.append(valid_landmarks)
@@ -181,4 +185,4 @@ def run_core_prediction(model, device, input_frame):
     #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
 
   
-    return overlay_img, cla
+    return overlay_img, cla, landmarks_tensor

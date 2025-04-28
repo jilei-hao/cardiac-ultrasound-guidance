@@ -7,12 +7,12 @@ import matplotlib.pyplot as plt
 def load_pretrained_model(device):
     model = resnet18()
     num_ftrs = model.fc.in_features
-    model.fc = torch.nn.Linear(num_ftrs, 3)  # Adjust output layer
+    model.fc = torch.nn.Linear(num_ftrs, 1)  # Adjust output layer
     # change first layer to take 1 channel
-    # model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+    model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     # load fine-tuned weights
-    fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth', map_location=device)
-    # fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned_new.pth', map_location=device)
+    # fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth', map_location=device)
+    fine_tuned_weights = torch.load('weights/9_resnet18_multiclass_tuned_regression_ONLYIMAGES_BEST_new.pth', map_location=device)
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()
     return model, preprocess
@@ -38,7 +38,6 @@ def run_pose_classifier(model, device, input_image, transform):
     # # Convert grayscale to 3-channel tensor
     # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
     # image = image.unsqueeze(0).to(device)
-
     # # Visual check
     # np_img = image.squeeze().permute(1, 2, 0).cpu().numpy().astype(np.uint8)
     # plt.imshow(np_img)
@@ -47,7 +46,8 @@ def run_pose_classifier(model, device, input_image, transform):
 
 
     
-    image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
+    # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
+    image = torch.from_numpy(input_image).unsqueeze(0).float()
     image = image.unsqueeze(0).to(device)
     # image = image.to(device)
 
@@ -55,15 +55,51 @@ def run_pose_classifier(model, device, input_image, transform):
     with torch.no_grad():
         outputs = model(image)
     # print(outputs)
-    _, predicted = torch.max(outputs.data,1)
+    # _, predicted = torch.max(outputs.data,1)
 
-    return num_to_rgb(predicted)
+    return num_to_rgb(outputs.item())
 
 
 def num_to_rgb(numerical_prediction, num_classes=3):
-    if numerical_prediction == 0:
-        return (0, 255, 0)
-    elif numerical_prediction == 1:
+    print(numerical_prediction)
+    numerical_prediction = _regression_to_num_classes(numerical_prediction)
+    if numerical_prediction == -1:
+        print("red")
+        return (255, 0 ,0)
+    elif numerical_prediction == 0:
+        print("yellow")
         return (255, 255, 0)
-    elif numerical_prediction == 2:
-        return (255, 0, 0)
+    elif numerical_prediction == 1:
+        print("green")
+        return (0, 255, 0)
+    
+
+def plot_landmarks_as_images(landmarks):
+    # return a 112x112 image with landmarks as a grayscale image
+    device = landmarks.device
+    image_size = (112, 112)
+    image = torch.zeros(image_size, device=device)
+    landmarks_x = landmarks[:, 0]
+    landmarks_y = landmarks[:, 1]
+    landmarks_ere = landmarks[:, 2]
+
+    # create coord grid
+    y = torch.arange(0, image_size[0], device=device).unsqueeze(1)
+    x = torch.arange(0, image_size[1], device=device).unsqueeze(0)
+    # plot each landmark
+    for i in range(landmarks_x.shape[0]):
+        sigma = 10 / landmarks_ere[i]
+        blob = torch.exp(-((x - landmarks_x[i])**2 + (y - landmarks_y[i])**2) / (2 * sigma**2))
+        image += blob
+    # normalize image
+    image = image / torch.max(image)
+    return image
+
+
+def _regression_to_num_classes(regression_val):
+    if regression_val <= -1:
+        return -1 # red
+    elif regression_val <= 0:
+        return 0 # yellow
+    else:
+        return 1 # green

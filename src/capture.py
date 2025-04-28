@@ -92,7 +92,7 @@ def run_capture(options):
         ################################################################
         # result_frame = lp.predict_landmark(frame)
 
-        result_frame, cla= lp.run_core_prediction(landmark_model, device, frame)
+        result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, frame)
         
 
         if (frame_count % 3 == 0):
@@ -103,7 +103,7 @@ def run_capture(options):
         
         result_frame = ih.add_rgb_frame_to_result(result_frame, crnt_classifier_result)
 
-        print("classifier result: ", crnt_classifier_result)
+        # print("classifier result: ", crnt_classifier_result)
 
 
         ################################################################
@@ -128,7 +128,7 @@ def run_capture(options):
 
         frame_count += 1
 
-        print("avg fps: ", frame_count / (time.time() - start_time))
+        # print("avg fps: ", frame_count / (time.time() - start_time))
 
         # Wait for the specified interval
         time.sleep(options.frame_interval)
