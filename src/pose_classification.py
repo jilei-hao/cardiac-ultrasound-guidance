@@ -54,7 +54,8 @@ def run_pose_classifier(model, device, input_image, landmarks, transform):
     # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
     image = torch.from_numpy(input_image).unsqueeze(0).float()
     image = image.unsqueeze(0).to(device)
-    # image = image.to(device)
+    # normalize
+    image = image / torch.max(image)
 
     # feed image into model
     with torch.no_grad():
