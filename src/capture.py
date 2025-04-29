@@ -29,7 +29,9 @@ def run_capture(options):
         os.makedirs(options.save_folder)
 
     landmark_model, device = lp.configure_torch()
-    classifier_model, preprocess = pc.load_pretrained_model(device)
+    
+    use_landmarks_for_estimation = True # flag for using landmarks for estimation
+    classifier_model, preprocess = pc.load_pretrained_model(device, use_landmarks_for_estimation)
 
     crnt_classifier_result = (255, 255, 255)
 
@@ -65,7 +67,7 @@ def run_capture(options):
                 result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
 
                 if frame_count % 3 == 0:
-                    crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess)
+                    crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, use_landmarks_for_estimation)
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
                 vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)

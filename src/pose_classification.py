@@ -4,28 +4,34 @@ import numpy as np
 from torchvision.models import resnet18, ResNet18_Weights
 import matplotlib.pyplot as plt
 
-def load_pretrained_model(device):
+def load_pretrained_model(device, use_landmarks_for_estimation):
+    # ---- CHANGE THIS VARIABLE FOR IMAGE ONLY OR IMAGE + LANDMARKS ----
+    
     model = resnet18()
     num_ftrs = model.fc.in_features
     model.fc = torch.nn.Linear(num_ftrs, 1)  # Adjust output layer
-    # change first layer to take 1 channel
-    model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-    # load fine-tuned weights
-    # fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth', map_location=device)
-    fine_tuned_weights = torch.load('weights/9_resnet18_multiclass_tuned_regression_ONLYIMAGES_BEST_new.pth', map_location=device)
+    if use_landmarks_for_estimation:
+        print("Taking image + landmarks for pose estimation")
+        # change the first layer to take 2 channel
+        model.conv1 = torch.nn.Conv2d(2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        fine_tuned_weights = torch.load("weights/PostEst_7_resnet18_multiclass_tuned_regression_landmarks_BEST.pth", map_location=device)
+    else:
+        print("Taking image only for pose estimation")
+        # change the first layer to take 1 channel
+        model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        fine_tuned_weights = torch.load("weights/PostEst_9_resnet18_multiclass_tuned_regression_ONLYIMAGES_BEST_new.pth", map_location=device)
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()
     return model, preprocess
 
 
-def run_pose_classifier(model, device, input_image, landmarks, transform):
+def run_pose_classifier(model, device, input_image, landmarks, transform, use_landmarks_for_estimation):
     model = model.to(device)
     model.eval()
     # input_image is a np array
     # Convert to tensor
     # image = torch.tensor(input_image)
     
-    landmarks_image = plot_landmarks_as_images(landmarks)
     # apply pytorch transform to the image
     # image = (image - torch.min(image)) / (torch.max(image) - torch.min(image))
     # image = torch.stack((image, image, image), dim=2)
@@ -35,27 +41,36 @@ def run_pose_classifier(model, device, input_image, landmarks, transform):
     # # add a 1 to the 0th dimension
     # image = image.unsqueeze(0)
 
+    
+    # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
+    echo_image = torch.from_numpy(input_image).unsqueeze(0).unsqueeze(0).float().to(device)
+    
+    # normalize
+    echo_image = echo_image / torch.max(echo_image)
+    
+    if use_landmarks_for_estimation:
+        # first get landmarks as images
+        landmarks_image = plot_landmarks_as_images(landmarks)
+        # add batch dimension and channel dimension
+        landmarks_image = landmarks_image.unsqueeze(0).unsqueeze(0).to(device)
+        # stack image and landmarks_image
+        image = torch.cat((echo_image, landmarks_image), dim=1)
+    else:
+        image = echo_image
+        
     # # ------ checking orientation of image passed to classifier ------
     # # Convert grayscale to 3-channel tensor
     # plot_landmarks_instead_of_echo = True
     # if plot_landmarks_instead_of_echo:
-    #     image = landmarks_image.unsqueeze(0).float()
+    #     plotted_image = landmarks_image
     # else:
-    #     image = torch.from_numpy(input_image).unsqueeze(0).float()
-    # image = image.unsqueeze(0).to(device)
+    #     plotted_image = echo_image
     # # Visual check
-    # np_img = image.squeeze().cpu().numpy()
-    # plt.imshow(np_img, cmap='gray')
+    # np_plotted_img = plotted_image.squeeze().cpu().numpy()
+    # plt.imshow(np_plotted_img, cmap='gray')
     # plt.title("Image passed to model")
     # plt.show()
-
-
-    
-    # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
-    image = torch.from_numpy(input_image).unsqueeze(0).float()
-    image = image.unsqueeze(0).to(device)
-    # normalize
-    image = image / torch.max(image)
+        
 
     # feed image into model
     with torch.no_grad():
