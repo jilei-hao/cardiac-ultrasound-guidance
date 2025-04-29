@@ -21,8 +21,20 @@ def run_capture(options):
 
     if options.render:
         root = tk.Tk()
-        root.title("Capture")
-        label = tk.Label(root)
+        root.title("Results")
+
+        # Set the size and position of the "Capture" window
+        capture_width = monitor['width']
+        capture_height = monitor['height'] - 28  # Adjust height to fit the title bar
+        capture_left = monitor['left'] + monitor['width']  # Place it to the right of the "Monitor" window
+        capture_top = monitor['top']
+        root.geometry(f"{capture_width}x{capture_height}+{capture_left}+{capture_top}")
+        
+        # Set background color to black
+        root.configure(bg='black')
+
+        # Create a label to show the image with a black background
+        label = tk.Label(root, bg='black')
         label.pack(expand=True, fill='both')
 
     if options.save and not os.path.exists(options.save_folder):
@@ -71,7 +83,14 @@ def run_capture(options):
                 vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
                 vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
 
-                display_frame = cv2.resize(vis_frame, (512, 512), interpolation=cv2.INTER_AREA)
+                # get the current geometry of the window
+                window_geometry = root.geometry()
+                window_width = int(window_geometry.split('x')[0])
+                window_height = int(window_geometry.split('x')[1].split('+')[0])
+                # get the minimum width and height of the window
+                frame_width = min(window_width, window_height)
+
+                display_frame = cv2.resize(vis_frame, (frame_width, frame_width), interpolation=cv2.INTER_AREA)
 
                 if options.render:
                     img = Image.fromarray(display_frame)
