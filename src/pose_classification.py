@@ -60,7 +60,7 @@ def run_pose_classifier(model, device, input_image, landmarks, transform, use_la
         
     # # ------ checking orientation of image passed to classifier ------
     # # Convert grayscale to 3-channel tensor
-    # plot_landmarks_instead_of_echo = True
+    # plot_landmarks_instead_of_echo = use_landmarks_for_estimation
     # if plot_landmarks_instead_of_echo:
     #     plotted_image = landmarks_image
     # else:
