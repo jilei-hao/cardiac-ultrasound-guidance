@@ -12,7 +12,7 @@ def load_pretrained_model(device):
     model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     # load fine-tuned weights
     # fine_tuned_weights = torch.load('weights/resnet18_multiclass_tuned.pth', map_location=device)
-    fine_tuned_weights = torch.load('weights/9_resnet18_multiclass_tuned_regression_ONLYIMAGES_BEST_new.pth', map_location=device)
+    fine_tuned_weights = torch.load('weights/pose_classification.pth', map_location=device)
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()
     return model, preprocess

@@ -5,7 +5,7 @@ path_scrcpy=scrcpy
 
 # execute scrcpy
 $path_scrcpy \
-  --window-title "SM-T860" \
+  --window-title "Input" \
   --video-bit-rate 8M \
   --no-control \
   --no-audio \
