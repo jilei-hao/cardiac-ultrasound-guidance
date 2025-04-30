@@ -81,7 +81,7 @@ def run_capture(options):
                 resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
                 frame_buffer.add_frame(resized_frame_rgb)
 
-                # get a video from the buffer
+                # retrieve all frames from the buffer
                 buffer_frames = frame_buffer.get_all_frames()
                 buffer_frames = np.array(buffer_frames)
                 
