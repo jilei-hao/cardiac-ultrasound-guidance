@@ -24,12 +24,15 @@ SHARED_CMAP = mcolors.LinearSegmentedColormap.from_list(
 def get_color_for_ere(ere, max_ere):
     # Normalize the ERE value: 0 (best) to max_ere (worst)
     normalized = ere / max_ere
-    normalized = min(max(normalized, 0), 1)  # Clamp between [0, 1]
+    normalized = np.clip(normalized, 0, 1)  # Ensure normalized is within [0, 1]
 
-    r, g, b, a = SHARED_CMAP(normalized)
-    # Debug print
-    # print(f"normalized: {normalized:.3f}, ere: {ere:.3f}")
+    # Ensure normalized is a NumPy array with at least one dimension
+    normalized = np.array([normalized])
 
+    # Get the color from the colormap
+    rgba = SHARED_CMAP(normalized)[0]  # Extract the first (and only) RGBA tuple
+
+    r, g, b, a = rgba
     return (int(r * 255), int(g * 255), int(b * 255))
 
 
@@ -73,7 +76,7 @@ def predict_landmark(input_frame, ere_threshold=1.5):
     model = ResNet34UNet(num_landmarks=42)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "weights/47marks_partial_022125_best.pth"
+    model_path = "weights/landmark_prediction.pth"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
@@ -126,7 +129,7 @@ def configure_torch():
     model = ResNet34UNet(num_landmarks=47)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "weights/47marks_partial_022125_best.pth"
+    model_path = "weights/landmark_prediction.pth"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 

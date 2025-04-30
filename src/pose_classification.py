@@ -10,6 +10,7 @@ def load_pretrained_model(device, use_landmarks_for_estimation):
     model = resnet18()
     num_ftrs = model.fc.in_features
     model.fc = torch.nn.Linear(num_ftrs, 1)  # Adjust output layer
+
     if use_landmarks_for_estimation:
         print("Taking image + landmarks for pose estimation")
         # change the first layer to take 2 channel
@@ -20,6 +21,7 @@ def load_pretrained_model(device, use_landmarks_for_estimation):
         # change the first layer to take 1 channel
         model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         fine_tuned_weights = torch.load("weights/PostEst_9_resnet18_multiclass_tuned_regression_ONLYIMAGES_BEST_new.pth", map_location=device)
+
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()
     return model, preprocess
