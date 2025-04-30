@@ -9,6 +9,7 @@ import macos_window_helpers as mwh
 import landmark_prediction as lp
 import pose_classification as pc
 import image_helpers as ih
+from frame_buffer import FrameBuffer
 
 def run_capture(options):
     monitor = mwh.get_window_bbox(options.window_title)
@@ -48,11 +49,17 @@ def run_capture(options):
 
     crnt_classifier_result = (255, 255, 255)
 
+    # Initialize the frame buffer
+    frame_buffer = FrameBuffer(buffer_size=100)
+
+
     with mss.mss() as sct:
         start_time = time.time()
         frame_count = 0
 
         try:
+            # Main loop starts, everything inside should be efficient
+            # Should achieve 30 FPS. Frame time (runtime for each iteration) should be less than 33ms
             while True:
                 screenshot = sct.grab(monitor)
                 orig_frame = np.array(screenshot)
@@ -70,6 +77,15 @@ def run_capture(options):
                     crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
                 resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
+
+                # push an RGB frame to the buffer
+                resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
+                frame_buffer.add_frame(resized_frame_rgb)
+
+                # retrieve all frames from the buffer
+                buffer_frames = frame_buffer.get_all_frames()
+                buffer_frames = np.array(buffer_frames)
+                
 
                 if options.save:
                     crnt_timestamp = int(time.time() * 1000)
