@@ -42,8 +42,9 @@ def run_capture(options):
 
     landmark_model, device = lp.configure_torch()
     
-    use_landmarks_for_estimation = True # flag for using landmarks for estimation
-    classifier_model, preprocess = pc.load_pretrained_model(device, use_landmarks_for_estimation)
+    options.use_landmarks_for_pose = options.use_landmarks_for_pose.lower() == 'true' # grab flag for using landmarks for estimation
+    print("options.use_landmarks_for_pose: ", options.use_landmarks_for_pose)
+    classifier_model, preprocess = pc.load_pretrained_model(device, options.use_landmarks_for_pose)
 
     crnt_classifier_result = (255, 255, 255)
 
@@ -79,7 +80,7 @@ def run_capture(options):
                 result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
 
                 if frame_count % 3 == 0:
-                    crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, use_landmarks_for_estimation)
+                    crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
                 vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
@@ -127,7 +128,8 @@ def main():
   parser.add_argument('--frame_interval', type=float, default=0.05, help='Interval between frames in seconds.')
   parser.add_argument('--duration', type=float, default=None, help='Duration to capture in seconds. Set to None for infinite capture.')
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
-
+  parser.add_argument('--use_landmarks_for_pose', type=str, default='true',
+                    help='Use landmarks for pose estimation: true or false (default: true)')
   options = parser.parse_args()
   run_capture(options)
 
