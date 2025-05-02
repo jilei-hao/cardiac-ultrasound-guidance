@@ -11,6 +11,7 @@ import pose_classification as pc
 import image_helpers as ih
 from frame_buffer import FrameBuffer
 from lvef_prediction import LVEFPredictor
+import requests
 
 def run_capture(options):
     monitor = mwh.get_window_bbox(options.window_title)
@@ -138,6 +139,19 @@ def run_capture(options):
 
                     root.update_idletasks()
                     root.update()
+                send_to_chat = True
+                # if send_to_chat:
+                #     print("Sending current frame...")
+                #     try:
+                #         _, encoded_img = cv2.imencode('.png', resized_frame)
+                #         response = requests.post(options.upload_url, files={
+                #             "file": ("frame.png", encoded_img.tobytes(), "image/png")
+                #         })
+                #         print("Upload response:", response.json())
+                #     except Exception as e:
+                #         print("Upload failed:", str(e))
+                #     upload_flag = False
+                #     print("Resumed.")    
 
                 frame_count += 1
                 time.sleep(options.frame_interval)
@@ -166,6 +180,7 @@ def main():
                     help='Use landmarks for pose estimation: true or false (default: true)')
   parser.add_argument('--show_lvef', type=str, default='false',
                      help='Show LVEF prediction: true or false (default: false)')
+#   parser.add_argument('--upload_url', type=str, default="http://tbd:8000/upload", help='URL to upload the frame to.')
   options = parser.parse_args()
   run_capture(options)
 

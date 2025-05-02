@@ -206,6 +206,6 @@ def overlay_landmarks(vis_frame, landmarks_tensor, ere_threshold=6):
             scaled_x = int(x.item() * scale_x)
             scaled_y = int(y.item() * scale_y)
             cv2.circle(vis_frame, (scaled_x, scaled_y), 15, color, -1)
-            cv2.addWeighted(vis_frame)
+            cv2.addWeighted(vis_frame, alpha=0.5, src2=vis_frame, beta=0.5, gamma=0)
 
     return vis_frame
