@@ -108,9 +108,9 @@ def predict_landmark(input_frame, ere_threshold=1.5):
 
       # draw only if ERE <= threshold
       if ere_val <= ere_threshold:
-          fixed_radius = 1
+          fixed_radius = 10
           color = get_color_for_ere(ere_val, max_ere=ere_threshold/1.5)
-          cv2.circle(overlay_img, (x, y), fixed_radius, color,2)
+          cv2.circle(overlay_img, (x, y), fixed_radius, color,10)
         #   valid_landmarks += 1
 
 
@@ -168,11 +168,12 @@ def run_core_prediction(model, device, input_frame):
       # draw only if ERE <= threshold
       ere_threshold = 6
       if ere_val <= ere_threshold:
-          fixed_radius = 1
+          fixed_radius = 10
           if c in [42, 45, 46]:
             ere_val = ere_val / 3
           color = get_color_for_ere(ere_val, max_ere=ere_threshold)
-          cv2.circle(overlay_img, (x, y), fixed_radius, color,2)
+          cv2.circle(overlay_img, (x, y), fixed_radius, color,10)
+        #   if ere_val > 5:
           valid_landmarks += 1
     # return landmark coords and ere as tensor
       landmarks_tensor = torch.tensor([landmarks_x, landmarks_y, landmarks_ere]).T
@@ -180,9 +181,9 @@ def run_core_prediction(model, device, input_frame):
       
     #   landmark_counts.append(valid_landmarks)
       cla = (255, 255, 255)
-      if valid_landmarks > 25:
+      if valid_landmarks > 30:
           cla = (0, 255, 0)
-      elif valid_landmarks > 15:
+      elif valid_landmarks > 25:
           cla = (255, 255, 0)
       else:
           cla = (255, 0, 0)
@@ -204,6 +205,7 @@ def overlay_landmarks(vis_frame, landmarks_tensor, ere_threshold=6):
             color = get_color_for_ere(ere_val, max_ere=ere_threshold)
             scaled_x = int(x.item() * scale_x)
             scaled_y = int(y.item() * scale_y)
-            cv2.circle(vis_frame, (scaled_x, scaled_y), 5, color, -1)
+            cv2.circle(vis_frame, (scaled_x, scaled_y), 15, color, -1)
+            cv2.addWeighted(vis_frame)
 
     return vis_frame
