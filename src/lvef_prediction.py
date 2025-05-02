@@ -15,7 +15,7 @@ class LVEFPredictor:
         # load model
         lvef_model_name = "r2plus1d_18"
         self.model = torchvision.models.video.__dict__[lvef_model_name](pretrained=None)
-        # chagne model structure according to echonet
+        # change model structure according to echonet
         self.model.fc = nn.Linear(self.model.fc.in_features, 1)
         self.model.fc.bias.data[0] = 55.6 # this is from echonet/utils/video.py
         # send model to device
