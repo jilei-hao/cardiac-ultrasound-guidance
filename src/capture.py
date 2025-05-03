@@ -10,6 +10,8 @@ import landmark_prediction as lp
 import pose_classification as pc
 import image_helpers as ih
 from frame_buffer import FrameBuffer
+from lvef_prediction import LVEFPredictor
+import requests
 
 def run_capture(options):
     monitor = mwh.get_window_bbox(options.window_title)
@@ -46,6 +48,11 @@ def run_capture(options):
     options.use_landmarks_for_pose = options.use_landmarks_for_pose.lower() == 'true' # grab flag for using landmarks for estimation
     print("options.use_landmarks_for_pose: ", options.use_landmarks_for_pose)
     classifier_model, preprocess = pc.load_pretrained_model(device, options.use_landmarks_for_pose)
+    
+    if options.show_lvef.lower() == 'true':
+        print("Running LVEF prediction...")
+        # call LVEF predictor constructor
+        lvef_predictor = LVEFPredictor(device)  
 
     crnt_classifier_result = (255, 255, 255)
 
@@ -78,14 +85,25 @@ def run_capture(options):
 
                 resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
 
-                # push an RGB frame to the buffer
-                resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
-                frame_buffer.add_frame(resized_frame_rgb)
+                # ---- Optional: Show LVEF prediction ----
+                if options.show_lvef.lower() == 'true':
+                    # push an RGB frame to the buffer
+                    resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
+                    frame_buffer.add_frame(resized_frame_rgb)
 
-                # retrieve all frames from the buffer
-                buffer_frames = frame_buffer.get_all_frames()
-                buffer_frames = np.array(buffer_frames)
-                
+                    # retrieve all frames from the buffer
+                    buffer_frames = frame_buffer.get_all_frames()
+                    buffer_frames = np.array(buffer_frames)
+                    
+                    # pass buffered frames to echonet once it has 100 frames
+                    if buffer_frames.shape[0] >= 20:
+                        # print("PLACEHOLDER for EchoNet")
+                        # run echonet
+                        mean, std = lvef_predictor.get_mean_and_std(buffer_frames)
+                        # print("mean and std: ", mean, std)
+                        lvef_pred = lvef_predictor.run_prediction(buffer_frames)
+                        print("LVEF prediction: ", lvef_pred)
+                 
 
                 if options.save:
                     crnt_timestamp = int(time.time() * 1000)
@@ -97,6 +115,7 @@ def run_capture(options):
 
                 if frame_count % 3 == 0:
                     crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
+                    crnt_classifier_result = cla
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
                 vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
@@ -120,6 +139,19 @@ def run_capture(options):
 
                     root.update_idletasks()
                     root.update()
+                send_to_chat = True
+                # if send_to_chat:
+                #     print("Sending current frame...")
+                #     try:
+                #         _, encoded_img = cv2.imencode('.png', resized_frame)
+                #         response = requests.post(options.upload_url, files={
+                #             "file": ("frame.png", encoded_img.tobytes(), "image/png")
+                #         })
+                #         print("Upload response:", response.json())
+                #     except Exception as e:
+                #         print("Upload failed:", str(e))
+                #     upload_flag = False
+                #     print("Resumed.")    
 
                 frame_count += 1
                 time.sleep(options.frame_interval)
@@ -146,6 +178,9 @@ def main():
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
   parser.add_argument('--use_landmarks_for_pose', type=str, default='true',
                     help='Use landmarks for pose estimation: true or false (default: true)')
+  parser.add_argument('--show_lvef', type=str, default='false',
+                     help='Show LVEF prediction: true or false (default: false)')
+#   parser.add_argument('--upload_url', type=str, default="http://tbd:8000/upload", help='URL to upload the frame to.')
   options = parser.parse_args()
   run_capture(options)
 
