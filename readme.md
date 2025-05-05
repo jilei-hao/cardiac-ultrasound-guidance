@@ -15,6 +15,10 @@
  `pip install torch`
  `pip install mss`
  `pip install pyobjc`
+ `pip install numpy`
+ `pip install opencv-python`
+ `pip install Pillow`
+ `pip install requests`
 
 ## Run the Program
 

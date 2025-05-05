@@ -84,12 +84,36 @@ def run_capture(options):
                     crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
                 resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
+                 
+                # ---- Optional: Save frames ----
+                # Save the screenshot without prediction to disk
+                if options.save:
+                    crnt_timestamp = int(time.time() * 1000)
+                    filename = os.path.join(options.save_folder, f"{crnt_timestamp}.png")
+                    cv2.imwrite(filename, resized_frame)
+                    print(f"✅ Saved: {filename}")
+
+                # ---- Run Landmark Prediction ----
+                result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+
+                # ---- Run Pose Classification ----
+                if frame_count % 3 == 0:
+                    # crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
+                    crnt_classifier_result = cla
+
+                vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
+                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
+                vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
+
+                frame_buffer.add_frame(vis_frame, crnt_classifier_result)
+                print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
+
 
                 # ---- Optional: Show LVEF prediction ----
                 if options.show_lvef.lower() == 'true':
                     # push an RGB frame to the buffer
                     resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
-                    frame_buffer.add_frame(resized_frame_rgb)
+                    frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
 
                     # retrieve all frames from the buffer
                     buffer_frames = frame_buffer.get_all_frames()
@@ -103,23 +127,7 @@ def run_capture(options):
                         # print("mean and std: ", mean, std)
                         lvef_pred = lvef_predictor.run_prediction(buffer_frames)
                         print("LVEF prediction: ", lvef_pred)
-                 
 
-                if options.save:
-                    crnt_timestamp = int(time.time() * 1000)
-                    filename = os.path.join(options.save_folder, f"{crnt_timestamp}.png")
-                    cv2.imwrite(filename, resized_frame)
-                    print(f"✅ Saved: {filename}")
-
-                result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
-
-                if frame_count % 3 == 0:
-                    crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
-                    crnt_classifier_result = cla
-
-                vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
-                vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
 
                 # get the current geometry of the window
                 window_geometry = root.geometry()
@@ -139,7 +147,10 @@ def run_capture(options):
 
                     root.update_idletasks()
                     root.update()
+
+            
                 send_to_chat = True
+
                 # if send_to_chat:
                 #     print("Sending current frame...")
                 #     try:
