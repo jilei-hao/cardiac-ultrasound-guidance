@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
+import threading
 import macos_window_helpers as mwh
 import landmark_prediction as lp
 import pose_classification as pc
@@ -59,6 +60,26 @@ def run_capture(options):
     # Initialize the frame buffer
     frame_buffer = FrameBuffer(buffer_size=100)
 
+    # Initialize lvef thread runner
+    lvef_lock = threading.Lock()
+    lvef_thread = None
+    lvef_result = None
+
+    def dummy_wait():
+        import random
+
+        # Dummy function to wait 2300ms
+        time.sleep(2.3)
+        print("[dummy_wait]: frame_buffer is_good: ", frame_buffer.is_video_good())
+        return random.randint(55, 70)  # Dummy prediction value
+
+    def run_lvef_prediction():
+        nonlocal lvef_result
+        result = dummy_wait()
+        with lvef_lock:
+            lvef_result = result 
+            print("LVEF prediction: ", lvef_result)
+
 
     with mss.mss() as sct:
         start_time = time.time()
@@ -110,23 +131,34 @@ def run_capture(options):
 
 
                 # ---- Optional: Show LVEF prediction ----
-                if options.show_lvef.lower() == 'true':
-                    # push an RGB frame to the buffer
-                    resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
-                    frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
+                # if options.show_lvef.lower() == 'true':
+                #     # push an RGB frame to the buffer
+                #     resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
+                #     frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
 
-                    # retrieve all frames from the buffer
-                    buffer_frames = frame_buffer.get_all_frames()
-                    buffer_frames = np.array(buffer_frames)
+                #     # retrieve all frames from the buffer
+                #     buffer_frames = frame_buffer.get_all_frames()
+                #     buffer_frames = np.array(buffer_frames)
                     
-                    # pass buffered frames to echonet once it has 100 frames
-                    if buffer_frames.shape[0] >= 20:
-                        # print("PLACEHOLDER for EchoNet")
-                        # run echonet
-                        mean, std = lvef_predictor.get_mean_and_std(buffer_frames)
-                        # print("mean and std: ", mean, std)
-                        lvef_pred = lvef_predictor.run_prediction(buffer_frames)
-                        print("LVEF prediction: ", lvef_pred)
+                #     # pass buffered frames to echonet once it has 100 frames
+                #     if buffer_frames.shape[0] >= 20:
+                #         # print("PLACEHOLDER for EchoNet")
+                #         # run echonet
+                #         # mean, std = lvef_predictor.get_mean_and_std(buffer_frames)
+                #         # print("mean and std: ", mean, std)
+                #         lvef_pred = lvef_predictor.run_prediction(buffer_frames)
+                #         print("LVEF prediction: ", lvef_pred)
+
+                # Start the LVEF prediction thread if not already running
+                with lvef_lock:
+                    if lvef_thread is None or not lvef_thread.is_alive():
+                        lvef_thread = threading.Thread(target=run_lvef_prediction, daemon=True)
+                        lvef_thread.start()
+
+                if lvef_result is not None:
+                    # Draw the LVEF prediction on the frame
+                    vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(lvef_result) + "%")
+                        
 
 
                 # get the current geometry of the window
