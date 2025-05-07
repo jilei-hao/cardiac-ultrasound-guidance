@@ -11,9 +11,12 @@ import pose_classification as pc
 import image_helpers as ih
 from frame_buffer import FrameBuffer
 from lvef_prediction import LVEFPredictor
+from application_settings import ApplicationSettings
 import requests
 
 def run_capture(options):
+    app_settings = ApplicationSettings()
+
     monitor = mwh.get_window_bbox(options.window_title)
 
     if not monitor:
@@ -111,24 +114,27 @@ def run_capture(options):
                     cv2.imwrite(filename, resized_frame)
                     print(f"✅ Saved: {filename}")
 
-                result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+                cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
 
                 if frame_count % 3 == 0:
                     crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
                     crnt_classifier_result = cla
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
+                vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings)
                 vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
 
                 # get the current geometry of the window
                 window_geometry = root.geometry()
                 window_width = int(window_geometry.split('x')[0])
                 window_height = int(window_geometry.split('x')[1].split('+')[0])
+                app_settings.result_window_dimensions = (window_width, window_height)
+                
                 # get the minimum width and height of the window
                 frame_width = min(window_width, window_height)
+                app_settings.frame_dimensions = (frame_width, frame_width)
 
-                display_frame = cv2.resize(vis_frame, (frame_width, frame_width), interpolation=cv2.INTER_AREA)
+                display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
                 if options.render:
                     img = Image.fromarray(display_frame)
@@ -139,6 +145,7 @@ def run_capture(options):
 
                     root.update_idletasks()
                     root.update()
+
                 send_to_chat = True
                 # if send_to_chat:
                 #     print("Sending current frame...")

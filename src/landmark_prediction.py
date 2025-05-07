@@ -1,11 +1,8 @@
 # import os
-import cv2
 import torch
 import torch.nn.functional as F
 import numpy as np
-# import imageio
 import matplotlib.colors as mcolors
-# import pandas as pd
 
 from landmark_model import ResNet34UNet
 
@@ -64,65 +61,7 @@ def compute_ere(prob_map, pred_x, pred_y, threshold=0.03):
     dist_map = np.sqrt((grid_x - pred_x)**2 + (grid_y - pred_y)**2)
     ERE = np.sum(dist_map * truncated_map)
     return float(ERE)
-  
-  
 
-  
-
-def predict_landmark(input_frame, ere_threshold=1.5):
-  
-    # landmark_counts = []
-    
-    model = ResNet34UNet(num_landmarks=42)
-  
-    # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "weights/landmark_prediction.pth"
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
-
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
-
-    
-    H, W = input_frame.shape
-    # single-channel => model-channels
-
-    
-    
-
-    # Convert grayscale to BGR for overlays
-    overlay_img = cv2.cvtColor(input_frame, cv2.COLOR_GRAY2BGR)
-    # valid_landmarks = 0
-
-    probs_np = run_core_prediction()
-    
-    for c in range(probs_np.shape[0]):
-      heatmap_c = probs_np[c]
-      idx = np.argmax(heatmap_c)
-      y, x = np.unravel_index(idx, (H, W))
-
-      ere_val = compute_ere(heatmap_c, x, y, threshold=0.03)
-
- 
-
-      # draw only if ERE <= threshold
-      if ere_val <= ere_threshold:
-          fixed_radius = 10
-          color = get_color_for_ere(ere_val, max_ere=ere_threshold/1.5)
-          cv2.circle(overlay_img, (x, y), fixed_radius, color,10)
-        #   valid_landmarks += 1
-
-
-      
-      # landmark_counts.append(valid_landmarks)
-
-        ## of valid landmarks at top-left
-    #   cv2.putText(overlay_img, f"{valid_landmarks}", (5,12),
-    #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
-
-  
-    return overlay_img
 
 def configure_torch():
 
@@ -149,7 +88,6 @@ def run_core_prediction(model, device, input_frame):
     probs_np = probs.squeeze(0).cpu().numpy()  # => (42, H, W)
 
     # Convert grayscale to BGR for overlays
-    overlay_img = cv2.cvtColor(input_frame, cv2.COLOR_GRAY2BGR)
     valid_landmarks = 0
     
     landmarks_x, landmarks_y, landmarks_ere = [], [], []
@@ -163,49 +101,25 @@ def run_core_prediction(model, device, input_frame):
       landmarks_x.append(x)
       landmarks_y.append(y)
       landmarks_ere.append(ere_val)
- 
 
-      # draw only if ERE <= threshold
       ere_threshold = 6
+
       if ere_val <= ere_threshold:
-          fixed_radius = 10
-          if c in [42, 45, 46]:
-            ere_val = ere_val / 3
-          color = get_color_for_ere(ere_val, max_ere=ere_threshold)
-          cv2.circle(overlay_img, (x, y), fixed_radius, color,10)
-        #   if ere_val > 5:
-          valid_landmarks += 1
+        if c in [42, 45, 46]:
+          ere_val = ere_val / 3
+          
+        valid_landmarks += 1
+
     # return landmark coords and ere as tensor
-      landmarks_tensor = torch.tensor([landmarks_x, landmarks_y, landmarks_ere]).T
+    landmarks_tensor = torch.tensor([landmarks_x, landmarks_y, landmarks_ere]).T
         
-      
-    #   landmark_counts.append(valid_landmarks)
-      cla = (255, 255, 255)
-      if valid_landmarks > 30:
-          cla = (0, 255, 0)
-      elif valid_landmarks > 25:
-          cla = (255, 255, 0)
-      else:
-          cla = (255, 0, 0)
+    # landmark_counts.append(valid_landmarks)
+    cla = (255, 255, 255)
+    if valid_landmarks > 30:
+      cla = (0, 255, 0)
+    elif valid_landmarks > 25:
+      cla = (255, 255, 0)
+    else:
+      cla = (255, 0, 0)
 
-        ## of valid landmarks at top-left
-    #   cv2.putText(overlay_img, f"{valid_landmarks}", (5,12),
-    #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
-
-  
-    return overlay_img, cla, landmarks_tensor
-
-def overlay_landmarks(vis_frame, landmarks_tensor, ere_threshold=6):
-    scale_x = vis_frame.shape[1] / 112
-    scale_y = vis_frame.shape[0] / 112
-
-    for lm in landmarks_tensor:
-        x, y, ere_val = lm
-        if ere_val <= ere_threshold:
-            color = get_color_for_ere(ere_val, max_ere=ere_threshold)
-            scaled_x = int(x.item() * scale_x)
-            scaled_y = int(y.item() * scale_y)
-            cv2.circle(vis_frame, (scaled_x, scaled_y), 15, color, -1)
-            cv2.addWeighted(vis_frame, alpha=0.5, src2=vis_frame, beta=0.5, gamma=0)
-
-    return vis_frame
+    return cla, landmarks_tensor
