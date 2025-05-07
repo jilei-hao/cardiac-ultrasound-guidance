@@ -195,17 +195,22 @@ def run_core_prediction(model, device, input_frame):
   
     return overlay_img, cla, landmarks_tensor
 
-def overlay_landmarks(vis_frame, landmarks_tensor, ere_threshold=6):
+def overlay_landmarks(vis_frame, landmarks_tensor, radius = 12, ere_threshold=6, alpha=0.5):
     scale_x = vis_frame.shape[1] / 112
     scale_y = vis_frame.shape[0] / 112
 
-    for lm in landmarks_tensor:
+    overlay = vis_frame.copy()
+
+    for c, lm in enumerate(landmarks_tensor):
         x, y, ere_val = lm
+        if c in [42, 45, 46]:
+            ere_val = ere_val / 3
         if ere_val <= ere_threshold:
             color = get_color_for_ere(ere_val, max_ere=ere_threshold)
             scaled_x = int(x.item() * scale_x)
             scaled_y = int(y.item() * scale_y)
-            cv2.circle(vis_frame, (scaled_x, scaled_y), 15, color, -1)
-            cv2.addWeighted(vis_frame, alpha=0.5, src2=vis_frame, beta=0.5, gamma=0)
+            cv2.circle(overlay, (scaled_x, scaled_y), radius, color, -1)
+
+    cv2.addWeighted(overlay, alpha, vis_frame, 1 - alpha, 0, vis_frame)
 
     return vis_frame
