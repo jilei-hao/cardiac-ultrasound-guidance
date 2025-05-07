@@ -5,13 +5,22 @@ import numpy as np
 import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
+import threading
 import macos_window_helpers as mwh
 import landmark_prediction as lp
 import pose_classification as pc
 import image_helpers as ih
 from frame_buffer import FrameBuffer
 from lvef_prediction import LVEFPredictor
+
 import requests
+
+def run_lvef_prediction(queue, frame_buffer_data, lvef_predictor):
+    # This function will run in a separate process
+    print("[run_lvef_prediction] started")
+    result = lvef_predictor.run_prediction(frame_buffer_data)
+    print("[run_lvef_prediction] finished")
+    queue.put(result)  # Send the result back to the main process
 
 def run_capture(options):
     monitor = mwh.get_window_bbox(options.window_title)
@@ -51,13 +60,39 @@ def run_capture(options):
     
     if options.show_lvef.lower() == 'true':
         print("Running LVEF prediction...")
-        # call LVEF predictor constructor
+        # call LVEF predictor citenstructor
         lvef_predictor = LVEFPredictor(device)  
 
     crnt_classifier_result = (255, 255, 255)
 
     # Initialize the frame buffer
-    frame_buffer = FrameBuffer(buffer_size=100)
+    frame_buffer = FrameBuffer(buffer_size=20)
+
+    # Initialize lvef thread runner
+    lvef_lock = threading.Lock()
+    lvef_thread = None
+    lvef_result = None
+
+    def dummy_wait():
+        import random
+
+        # Dummy function to wait 2300ms
+        time.sleep(2.3)
+        print("[dummy_wait]: frame_buffer is_good: ", frame_buffer.is_video_good())
+        return random.randint(55, 70)  # Dummy prediction value
+
+    def run_lvef_prediction():
+        nonlocal lvef_result
+        nonlocal lvef_predictor
+        nonlocal frame_buffer
+        # result = dummy_wait()
+        video = frame_buffer.get_all_frames()
+        print("[run_lvef_prediction] started")
+        result = lvef_predictor.run_prediction(video)
+        print("[run_lvef_prediction] finished")
+        # with lvef_lock:
+        lvef_result = result 
+        # print("LVEF prediction: ", lvef_result)
 
 
     with mss.mss() as sct:
@@ -84,43 +119,68 @@ def run_capture(options):
                     crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
                 resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
-
-                # ---- Optional: Show LVEF prediction ----
-                if options.show_lvef.lower() == 'true':
-                    # push an RGB frame to the buffer
-                    resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
-                    frame_buffer.add_frame(resized_frame_rgb)
-
-                    # retrieve all frames from the buffer
-                    buffer_frames = frame_buffer.get_all_frames()
-                    buffer_frames = np.array(buffer_frames)
-                    
-                    # pass buffered frames to echonet once it has 100 frames
-                    if buffer_frames.shape[0] >= 20:
-                        # print("PLACEHOLDER for EchoNet")
-                        # run echonet
-                        mean, std = lvef_predictor.get_mean_and_std(buffer_frames)
-                        # print("mean and std: ", mean, std)
-                        lvef_pred = lvef_predictor.run_prediction(buffer_frames)
-                        print("LVEF prediction: ", lvef_pred)
                  
-
+                # ---- Optional: Save frames ----
+                # Save the screenshot without prediction to disk
                 if options.save:
                     crnt_timestamp = int(time.time() * 1000)
                     filename = os.path.join(options.save_folder, f"{crnt_timestamp}.png")
                     cv2.imwrite(filename, resized_frame)
                     print(f"✅ Saved: {filename}")
 
+                # ---- Run Landmark Prediction ----
                 result_frame, cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
 
+                # ---- Run Pose Classification ----
                 if frame_count % 3 == 0:
                     crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
-                    crnt_classifier_result = cla
+                    # uncomment to use landmark for classfier
+                    # crnt_classifier_result = cla
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
+                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor, radius=12, ere_threshold=6, alpha = 0.6)
                 vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
 
+                # frame_buffer.add_frame(vis_frame, crnt_classifier_result)
+                
+                # stack resized frames as RGB 
+                resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
+                # add resized frame to the buffer
+                frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
+                print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
+
+
+                # ---- Optional: Show LVEF prediction ----
+                # if options.show_lvef.lower() == 'true':
+                #     # push an RGB frame to the buffer
+                #     resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
+                #     frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
+
+                #     # retrieve all frames from the buffer
+                #     buffer_frames = frame_buffer.get_all_frames()
+                #     buffer_frames = np.array(buffer_frames)
+                    
+                #     # pass buffered frames to echonet once it has 100 frames
+                #     if buffer_frames.shape[0] >= 20:
+                #         # print("PLACEHOLDER for EchoNet")
+                #         # run echonet
+                #         # mean, std = lvef_predictor.get_mean_and_std(buffer_frames)
+                #         # print("mean and std: ", mean, std)
+                #         lvef_pred = lvef_predictor.run_prediction(buffer_frames)
+                #         print("LVEF prediction: ", lvef_pred)
+
+                # Start the LVEF prediction thread if not already running
+                if frame_buffer.is_video_good():
+                    # with lvef_lock:
+                        if lvef_thread is None or not lvef_thread.is_alive():
+                            lvef_thread = threading.Thread(target=run_lvef_prediction, daemon=True)
+                            lvef_thread.start()
+
+                if lvef_result is not None:
+                    # Draw the LVEF prediction on the frame
+                    vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(lvef_result.round(1)) + "%")
+
+                        
                 # get the current geometry of the window
                 window_geometry = root.geometry()
                 window_width = int(window_geometry.split('x')[0])
@@ -139,7 +199,10 @@ def run_capture(options):
 
                     root.update_idletasks()
                     root.update()
+
+            
                 send_to_chat = True
+
                 # if send_to_chat:
                 #     print("Sending current frame...")
                 #     try:

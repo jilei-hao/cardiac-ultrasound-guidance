@@ -55,6 +55,25 @@ def add_rgb_circle_to_result(input_frame, rgb):
 def add_rgb_frame_to_result(input_frame, rgb):
     width = 25
     return draw_frame_around_image(input_frame, width, rgb)
+
+def draw_text_on_frame(input_frame, text):
+    # Define the font and scale
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1
+    font_color = (255, 255, 255)  # White color
+    thickness = 2
+
+    # Get the text size
+    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+
+    # Calculate the position to the lower right corner
+    text_x = input_frame.shape[1] - text_size[0] - 20  # 20 pixels from the right
+    text_y = input_frame.shape[0] - text_size[1] - 20  # 20 pixels from the bottom
+
+    # Draw the text on the frame
+    cv2.putText(input_frame, text, (text_x, text_y), font, font_scale, font_color, thickness)
+
+    return input_frame
     
 
 if __name__ == "__main__":
