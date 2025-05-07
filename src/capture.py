@@ -115,10 +115,11 @@ def run_capture(options):
 
                 if frame_count % 3 == 0:
                     crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
-                    crnt_classifier_result = cla
+                    # uncomment to use landmark for classfier
+                    # crnt_classifier_result = cla
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor)
+                vis_frame = lp.overlay_landmarks(vis_frame, landmarks_tensor, radius=12, ere_threshold=6, alpha = 0.6)
                 vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
 
                 # get the current geometry of the window
