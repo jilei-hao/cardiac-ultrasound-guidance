@@ -36,7 +36,10 @@ class FrameBuffer:
   def add_frame(self, frame, classifier_result):
     with self.lock:  # Acquire the lock
       if self.frame_queue.full():
-        self.frame_queue.get()  # Remove the oldest frame
+        old_frame = self.frame_queue.get()  # Remove the oldest frame
+        # print old frame dimensions
+        # print(f"Removed frame with dimensions: {old_frame.frame.shape}")
+        del old_frame
 
       self.frame_queue.put(ClassifiedFrame(frame, classifier_result))  # Add the new frame
 
@@ -58,7 +61,10 @@ class FrameBuffer:
     """
     with self.lock:  # Acquire the lock
       if self.frame_queue.empty():
-        return None  # No frames to compute quality
+        return False  # No frames to compute quality
+      
+      if self.frame_queue.qsize() < self.buffer_size:
+        return False
 
       # Example: Green + Yellow > 90% and Green > 30%
       green_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result == (0, 255, 0))
@@ -69,4 +75,4 @@ class FrameBuffer:
       pct_green = green_count / total_count * 100
 
 
-      return (pct_yellow + pct_green) > 90 and pct_green > 30
+      return (pct_yellow + pct_green) > 90 and pct_green > 80
