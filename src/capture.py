@@ -75,7 +75,11 @@ def run_capture(options):
 
     def run_lvef_prediction():
         nonlocal lvef_result
-        result = dummy_wait()
+        nonlocal lvef_predictor
+        nonlocal frame_buffer
+        # result = dummy_wait()
+        video = frame_buffer.get_all_frames()
+        result = lvef_predictor.run_prediction()
         with lvef_lock:
             lvef_result = result 
             print("LVEF prediction: ", lvef_result)

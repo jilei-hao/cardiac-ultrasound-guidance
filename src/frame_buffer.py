@@ -1,5 +1,6 @@
 import queue
 import threading
+import numpy as np
 
 class ClassifiedFrame:
   """
@@ -45,7 +46,8 @@ class FrameBuffer:
 
   def get_all_frames(self):
     with self.lock:  # Acquire the lock
-      return list(self.frame_queue.queue.frame)
+      frame_array = list(self.frame_queue.queue)
+      return np.array([frame.frame for frame in frame_array])
     
 
   def is_video_good(self):
