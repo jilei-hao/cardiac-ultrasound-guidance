@@ -22,9 +22,28 @@ class ApplicationSettings:
   def __init__(self):
     self.result_window_dimensions = (512, 512)
     self.frame_dimensions = (112, 112)
+    self.run_lvef = False
+    self.print_fps = False
+    self.use_landmarks_for_pose_classification = False
+    self.landmark_radius = 12
+    self.landmark_alpha = 0.5
+
+  def increment_landmark_radius(self):
+    self.landmark_radius += 1
+
+  def decrement_landmark_radius(self):
+    if self.landmark_radius > 1:
+      self.landmark_radius -= 1
+
+  def increment_landmark_alpha(self):
+    self.landmark_alpha += 0.1
+
+  def decrement_landmark_alpha(self):
+    if self.landmark_alpha > 0.1:
+      self.landmark_alpha -= 0.1
     
 
-  def get_color_for_ere(ere, max_ere):
+  def get_color_for_ere(self, ere, max_ere):
     # Normalize the ERE value: 0 (best) to max_ere (worst)
     normalized = ere / max_ere
     normalized = np.clip(normalized, 0, 1)  # Ensure normalized is within [0, 1]

@@ -15,13 +15,6 @@ from lvef_prediction import LVEFPredictor
 from application_settings import ApplicationSettings
 import requests
 
-def run_lvef_prediction(queue, frame_buffer_data, lvef_predictor):
-    # This function will run in a separate process
-    print("[run_lvef_prediction] started")
-    result = lvef_predictor.run_prediction(frame_buffer_data)
-    print("[run_lvef_prediction] finished")
-    queue.put(result)  # Send the result back to the main process
-
 def run_capture(options):
     app_settings = ApplicationSettings()
 
@@ -50,6 +43,34 @@ def run_capture(options):
         # Create a label to show the image with a black background
         label = tk.Label(root, bg='black')
         label.pack(expand=True, fill='both')
+
+        # Define the key event handler
+        def handle_key(event):
+            if event.keysym == "e":  # run lvef prediction
+                
+                app_settings.run_lvef = not app_settings.run_lvef
+                print("Keyboard Event: [e] pressed. Toggling LVEF prediction to ", app_settings.run_lvef)
+            elif event.keysym == "f":  # print frame rate
+                app_settings.print_fps = not app_settings.print_fps
+                print("Keyboard Event: [f] pressed. Toggling FPS printing to ", app_settings.print_fps)
+            elif event.keysym == "l": # toggle landmarks for pose classification
+                app_settings.use_landmarks_for_pose_classification = not app_settings.use_landmarks_for_pose_classification
+                print("Keyboard Event: [l] pressed. Toggling landmarks for pose classification to ", app_settings.use_landmarks_for_pose_classification)
+            elif event.keysym == "Up":  # Increase the radius of the landmarks
+                app_settings.increment_landmark_radius()
+                print("Keyboard Event: [Up] pressed. Increasing landmark radius to ", app_settings.landmark_radius)
+            elif event.keysym == "Down":  # Decrease the radius of the landmarks
+                app_settings.decrement_landmark_radius()
+                print("Keyboard Event: [Down] pressed. Decreasing landmark radius to ", app_settings.landmark_radius)
+            elif event.keysym == "Right":  # Increase the alpha of the landmarks
+                app_settings.increment_landmark_alpha()
+                print("Keyboard Event: [Right] pressed. Increasing landmark alpha to ", app_settings.landmark_alpha)
+            elif event.keysym == "Left":  # Decrease the alpha of the landmarks
+                app_settings.decrement_landmark_alpha()
+                print("Keyboard Event: [Left] pressed. Decreasing landmark alpha to ", app_settings.landmark_alpha)
+
+        # Bind key events to the root window
+        root.bind("<Key>", handle_key)
 
     if options.save and not os.path.exists(options.save_folder):
         os.makedirs(options.save_folder)
@@ -89,11 +110,11 @@ def run_capture(options):
         nonlocal frame_buffer
         # result = dummy_wait()
         video = frame_buffer.get_all_frames()
-        print("[run_lvef_prediction] started")
         result = lvef_predictor.run_prediction(video)
-        print("[run_lvef_prediction] finished")
+
         # with lvef_lock:
         lvef_result = result 
+        app_settings.run_lvef = False # only run once
         # print("LVEF prediction: ", lvef_result)
 
 
@@ -134,13 +155,14 @@ def run_capture(options):
 
                 # ---- Run Pose Classification ----
                 if frame_count % 3 == 0:
-                    crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
-                    # uncomment to use landmark for classfier
-                    # crnt_classifier_result = cla
+                    if app_settings.use_landmarks_for_pose_classification:
+                        crnt_classifier_result = cla
+                    else:
+                        crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
 
                 vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-                vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings)
-                vis_frame = ih.add_rgb_frame_to_result(vis_frame, crnt_classifier_result)
+                vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
+                vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result)
 
                 # frame_buffer.add_frame(vis_frame, crnt_classifier_result)
                 
@@ -148,7 +170,7 @@ def run_capture(options):
                 resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
                 # add resized frame to the buffer
                 frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
-                print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
+                # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
                 # ---- Optional: Show LVEF prediction ----
@@ -171,7 +193,7 @@ def run_capture(options):
                 #         print("LVEF prediction: ", lvef_pred)
 
                 # Start the LVEF prediction thread if not already running
-                if frame_buffer.is_video_good():
+                if app_settings.run_lvef and frame_buffer.is_video_good():
                     # with lvef_lock:
                         if lvef_thread is None or not lvef_thread.is_alive():
                             lvef_thread = threading.Thread(target=run_lvef_prediction, daemon=True)
@@ -225,6 +247,11 @@ def run_capture(options):
 
                 if options.duration and (time.time() - start_time) > options.duration:
                     break
+
+                if app_settings.print_fps:
+                    elapsed_time = time.time() - start_time
+                    fps = frame_count / elapsed_time
+                    print(f"FPS: {fps:.2f}")
 
         except KeyboardInterrupt:
             print("\n🛑 Capture stopped manually.")
