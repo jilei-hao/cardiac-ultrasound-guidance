@@ -72,5 +72,5 @@ class LVEFPredictor:
         with torch.no_grad():
             y = self.model(x)
         y = y.squeeze().cpu().numpy()
-        print("LVEF: ", y)
+        print("LVEF: ", y.round(2))
         return y
