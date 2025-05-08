@@ -24,7 +24,7 @@ class ApplicationSettings:
     self.frame_dimensions = (112, 112)
     self.run_lvef = False
     self.print_fps = False
-    self.use_landmarks_for_pose_classification = False
+    self.use_threshold_for_pose_classification = False
     self.landmark_radius = 12
     self.landmark_alpha = 0.5
 

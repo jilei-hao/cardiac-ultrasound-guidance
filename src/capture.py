@@ -53,9 +53,9 @@ def run_capture(options):
             elif event.keysym == "f":  # print frame rate
                 app_settings.print_fps = not app_settings.print_fps
                 print("Keyboard Event: [f] pressed. Toggling FPS printing to ", app_settings.print_fps)
-            elif event.keysym == "l": # toggle landmarks for pose classification
-                app_settings.use_landmarks_for_pose_classification = not app_settings.use_landmarks_for_pose_classification
-                print("Keyboard Event: [l] pressed. Toggling landmarks for pose classification to ", app_settings.use_landmarks_for_pose_classification)
+            elif event.keysym == "t": # toggle landmarks for pose classification
+                app_settings.use_threshold_for_pose_classification = not app_settings.use_threshold_for_pose_classification
+                print("Keyboard Event: [t] pressed. Toggling thresholding for pose classification to ", app_settings.use_threshold_for_pose_classification)
             elif event.keysym == "Up":  # Increase the radius of the landmarks
                 app_settings.increment_landmark_radius()
                 print("Keyboard Event: [Up] pressed. Increasing landmark radius to ", app_settings.landmark_radius)
@@ -89,7 +89,7 @@ def run_capture(options):
     crnt_classifier_result = (255, 255, 255)
 
     # Initialize the frame buffer
-    frame_buffer = FrameBuffer(buffer_size=20)
+    frame_buffer = FrameBuffer(buffer_size=100)
 
     # Initialize lvef thread runner
     lvef_lock = threading.Lock()
@@ -155,7 +155,7 @@ def run_capture(options):
 
                 # ---- Run Pose Classification ----
                 if frame_count % 3 == 0:
-                    if app_settings.use_landmarks_for_pose_classification:
+                    if app_settings.use_threshold_for_pose_classification:
                         crnt_classifier_result = cla
                     else:
                         crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess, options.use_landmarks_for_pose)
