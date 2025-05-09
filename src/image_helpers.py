@@ -47,9 +47,9 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
 def draw_text_on_frame(input_frame, text):
     # Define the font and scale
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 1
+    font_scale = input_frame.shape[0] / 400
     font_color = (255, 255, 255)  # White color
-    thickness = 2
+    thickness = int(font_scale * 2)
 
     # Get the text size
     text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]

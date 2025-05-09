@@ -47,7 +47,6 @@ def run_capture(options):
   def handle_key(event):
     if event.keysym == "e":  # run lvef prediction
       app_settings.run_lvef = not app_settings.run_lvef
-      app_settings.run_lvef = not app_settings.run_lvef
       print("Keyboard Event: [e] pressed. Toggling LVEF prediction to ", app_settings.run_lvef)
     elif event.keysym == "f":  # print frame rate
       app_settings.print_fps = not app_settings.print_fps
