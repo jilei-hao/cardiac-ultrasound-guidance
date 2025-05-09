@@ -1,13 +1,9 @@
 #! /bin/bash
 
-dir_out=/Users/jileihao/dev/arpa-h-dev/lumify_streaming/output/250129/capture
+server_ip=10.102.149.196
 
-
-python3 src/capture.py --render \
-  --frame_interval 0 \
+python3 src/capture.py \
   --window_title "Input" \
-  --show_lvef true
-  # --upload_url http://141.212.114.250:8000/upload
-  # --use_landmarks_for_pose false \
+  --upload_url http://$server_ip:8000/upload
 
-# --duration 600
+# --save --save_folder /path/to/output/folder

@@ -4,7 +4,7 @@ import numpy as np
 from torchvision.models import resnet18, ResNet18_Weights
 import matplotlib.pyplot as plt
 
-def load_pretrained_model(device, use_landmarks_for_estimation):
+def load_pretrained_model(device, use_landmarks_for_estimation = True):
     # ---- CHANGE THIS VARIABLE FOR IMAGE ONLY OR IMAGE + LANDMARKS ----
     
     model = resnet18()
@@ -27,7 +27,7 @@ def load_pretrained_model(device, use_landmarks_for_estimation):
     return model, preprocess
 
 
-def run_pose_classifier(model, device, input_image, landmarks, transform, use_landmarks_for_estimation):
+def run_pose_classifier(model, device, input_image, landmarks, transform, use_landmarks_for_estimation = True):
     model = model.to(device)
     model.eval()
     # input_image is a np array
@@ -130,9 +130,10 @@ def plot_landmarks_as_images(landmarks, image_size=(112, 112), use_less_landmark
 
 
 def _regression_to_num_classes(regression_val):
-    if regression_val <= -1:
+    # print("regression_val: ", regression_val)
+    if regression_val <= -2:
         return -1 # red
-    elif regression_val <= 0:
+    elif regression_val <= -0.8:
         return 0 # yellow
     else:
         return 1 # green
