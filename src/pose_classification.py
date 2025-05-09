@@ -130,7 +130,7 @@ def plot_landmarks_as_images(landmarks, image_size=(112, 112), use_less_landmark
 
 
 def _regression_to_num_classes(regression_val):
-    print("regression_val: ", regression_val)
+    # print("regression_val: ", regression_val)
     if regression_val <= -2:
         return -1 # red
     elif regression_val <= -0.8:
