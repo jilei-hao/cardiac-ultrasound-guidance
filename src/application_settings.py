@@ -2,15 +2,15 @@ import matplotlib.colors as mcolors
 import numpy as np 
 
 SHARED_CMAP = mcolors.LinearSegmentedColormap.from_list(
-    "GreenYellowRed",
-    [
-        (0.0, "green"),
-        (0.3, "green"),
-        (0.4, "yellow"),
-        (0.6, "yellow"),
-        (0.7, "red"),
-        (1.0, "red")
-    ]
+  "GreenYellowRed",
+  [
+    (0.0, "green"),
+    (0.3, "green"),
+    (0.4, "yellow"),
+    (0.6, "yellow"),
+    (0.7, "red"),
+    (1.0, "red")
+  ]
 )
 
 class ApplicationSettings:
@@ -27,6 +27,7 @@ class ApplicationSettings:
     self.use_threshold_for_pose_classification = False
     self.landmark_radius = 12
     self.landmark_alpha = 0.5
+    self.run_image_upload = False
 
   def increment_landmark_radius(self):
     self.landmark_radius += 1
