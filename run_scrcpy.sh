@@ -9,7 +9,7 @@ $path_scrcpy \
   --video-bit-rate 8M \
   --no-control \
   --no-audio \
-  # --crop 1600:1600:0:400 \
+  --crop 1600:1600:0:400 \
   --max-size 1000
 
 
