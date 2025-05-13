@@ -133,7 +133,7 @@ def _regression_to_num_classes(regression_val):
     # print("regression_val: ", regression_val)
     if regression_val <= -1.5:
         return -1 # red
-    elif regression_val <= -0.6:
+    elif regression_val <= -0.2:
         return 0 # yellow
     else:
         return 1 # green
