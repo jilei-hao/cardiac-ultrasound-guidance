@@ -14,6 +14,10 @@ from frame_buffer import FrameBuffer
 from lvef_prediction import LVEFPredictor
 from application_settings import ApplicationSettings
 import requests
+from queue import Queue
+
+# define a queue
+classifier_queue = Queue()
 
 def run_capture(options):
   app_settings = ApplicationSettings()
@@ -85,6 +89,7 @@ def run_capture(options):
   lvef_predictor = LVEFPredictor(device)  
 
   crnt_classifier_result = (255, 255, 255)
+  crnt_classifier_result_pooled = (255, 255, 255)
 
   # Initialize the frame buffer
   frame_buffer = FrameBuffer(buffer_size=100)
@@ -148,15 +153,33 @@ def run_capture(options):
             crnt_classifier_result = cla
           else:
             crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess)
+            
+        # push the classifier result to the queue
+        classifier_queue.put(crnt_classifier_result)
+        # only run the following code if the queue is at least 5 elemenets long
+        sliding_window_size = 15
+        if classifier_queue.qsize() > sliding_window_size:
+          # pop the oldest result from the queue
+          classifier_queue.get()
+          # print result from the queue
+          # print(f"🗃️ Classifier Queue: {list(classifier_queue.queue)}")
+          # find the most common result in the queue
+          most_common_result = None
+          if not classifier_queue.empty():
+            most_common_result = max(set(list(classifier_queue.queue)), key=list(classifier_queue.queue).count)
+            crnt_classifier_result_pooled = most_common_result
+          else:
+            crnt_classifier_result_pooled = crnt_classifier_result
+          
 
         vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
         vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
-        vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result)
+        vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
         
         # stack resized frames as RGB 
         resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
         # add resized frame to the buffer
-        frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result)
+        frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result_pooled)
         # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 

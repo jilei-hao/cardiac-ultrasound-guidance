@@ -20,7 +20,7 @@ def add_rgb_circle_to_result(input_frame, rgb):
     return draw_circle_on_image(center, radius, input_frame, rgb)
 
 def add_rgb_border_to_result(input_frame, rgb):
-    width = 25
+    width = 40
     return draw_border_around_image(input_frame, width, rgb)
 
 
