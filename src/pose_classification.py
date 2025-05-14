@@ -15,7 +15,8 @@ def load_pretrained_model(device, use_landmarks_for_estimation = True):
         print("Taking image + landmarks for pose estimation")
         # change the first layer to take 2 channel
         model.conv1 = torch.nn.Conv2d(2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        fine_tuned_weights = torch.load("weights/PostEst_7_resnet18_multiclass_tuned_regression_landmarks_BEST.pth", map_location=device)
+        # fine_tuned_weights = torch.load("weights/PostEst_7_resnet18_multiclass_tuned_regression_landmarks_BEST.pth", map_location=device)
+        fine_tuned_weights = torch.load("weights/PostEst_20250513.pth", map_location=device)
     else:
         print("Taking image only for pose estimation")
         # change the first layer to take 1 channel
@@ -131,9 +132,9 @@ def plot_landmarks_as_images(landmarks, image_size=(112, 112), use_less_landmark
 
 def _regression_to_num_classes(regression_val):
     # print("regression_val: ", regression_val)
-    if regression_val <= -1.5:
+    if regression_val <= -1:
         return -1 # red
-    elif regression_val <= -0.2:
+    elif regression_val <= 0:
         return 0 # yellow
     else:
         return 1 # green
