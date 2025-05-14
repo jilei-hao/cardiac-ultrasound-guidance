@@ -73,6 +73,9 @@ def run_capture(options):
     elif event.keysym == "Left":  # Decrease the alpha of the landmarks
       app_settings.decrement_landmark_alpha()
       print("Keyboard Event: [Left] pressed. Decreasing landmark alpha to ", app_settings.landmark_alpha)
+    elif event.keysym == "b":  # Toggle the border
+      app_settings.show_border = not app_settings.show_border
+      print("Keyboard Event: [b] pressed. Toggling border to ", app_settings.show_border)
 
   # Bind key events to the root window
   root.bind("<Key>", handle_key)
@@ -174,7 +177,8 @@ def run_capture(options):
 
         vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
         vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
-        vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
+        if app_settings.show_border:
+          vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
         
         # stack resized frames as RGB 
         resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
@@ -192,7 +196,7 @@ def run_capture(options):
 
         if lvef_result is not None:
           # Draw the LVEF prediction on the frame
-          vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(lvef_result.round(1)) + "%")
+          vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(lvef_result.round) + "%")
 
         try:
           # get the current geometry of the window
