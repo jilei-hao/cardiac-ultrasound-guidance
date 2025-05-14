@@ -196,7 +196,7 @@ def run_capture(options):
 
         if lvef_result is not None:
           # Draw the LVEF prediction on the frame
-          vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(lvef_result.round) + "%")
+          vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(round(lvef_result.item())) + "%")
 
         try:
           # get the current geometry of the window
