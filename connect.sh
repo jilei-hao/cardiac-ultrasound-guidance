@@ -22,7 +22,7 @@ echo "Connecting to $ip"
 adb connect "$ip:5555"
 
 
-echo "Please unplug the USB cable. Running adb devices to check connection..."
+echo "Please unplug the USB cable. Press Enter to run adb devices to check connection..."
 read -r _
 
 adb devices
