@@ -1,6 +1,6 @@
 #! /bin/bash
 
-server_ip=10.102.149.196
+server_ip=141.212.114.250
 
 python3 src/capture.py \
   --window_title "Input" \

@@ -25,9 +25,11 @@ class ApplicationSettings:
     self.run_lvef = False
     self.print_fps = False
     self.use_threshold_for_pose_classification = False
-    self.landmark_radius = 12
+    self.landmark_radius = 8
     self.landmark_alpha = 0.5
     self.run_image_upload = False
+    # add hotkey to NOT show border (default is True)
+    self.show_border = True
 
   def increment_landmark_radius(self):
     self.landmark_radius += 1

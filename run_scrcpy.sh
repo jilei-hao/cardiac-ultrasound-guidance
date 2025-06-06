@@ -10,7 +10,7 @@ $path_scrcpy \
   --no-control \
   --no-audio \
   --crop 1600:1600:0:400 \
-  --max-size 1000
+  --max-size 900
 
 
 # --max-size 1280 \
