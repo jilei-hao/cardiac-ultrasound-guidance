@@ -137,3 +137,6 @@ cython_debug/
 
 
 weights/
+
+# dylib files
+*.dylib

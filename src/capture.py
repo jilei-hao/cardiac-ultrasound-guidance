@@ -15,6 +15,7 @@ from lvef_prediction import LVEFPredictor
 from application_settings import ApplicationSettings
 import requests
 from queue import Queue
+import data_access.clarius.clarius_streamer as ClariusStreamer
 
 # define a queue
 classifier_queue = Queue()
@@ -123,7 +124,9 @@ def run_capture(options):
       # Main loop starts, everything inside should be efficient
       # Should achieve 30 FPS. Frame time (runtime for each iteration) should be less than 33ms
       while True:
-        screenshot = sct.grab(monitor)
+        # screenshot = sct.grab(monitor)
+        screenshot = ClariusStreamer.get_frame()
+
         orig_frame = np.array(screenshot)
         orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
 
@@ -263,6 +266,10 @@ def main():
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
   parser.add_argument('--upload_url', type=str, default="http://localhost:8000/upload", help='URL to upload the frame to.')
   options = parser.parse_args()
+
+  ClariusStreamer.configure("192.168.1.1", "5828", "/Users/jileihao")
+  ClariusStreamer.start()
+
   run_capture(options)
 
 
