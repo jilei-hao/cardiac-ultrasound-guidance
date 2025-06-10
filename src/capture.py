@@ -127,6 +127,9 @@ def run_capture(options):
         # screenshot = sct.grab(monitor)
         screenshot = ClariusStreamer.get_frame()
 
+        if screenshot is None:
+          continue
+
         orig_frame = np.array(screenshot)
         orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
 
@@ -267,7 +270,7 @@ def main():
   parser.add_argument('--upload_url', type=str, default="http://localhost:8000/upload", help='URL to upload the frame to.')
   options = parser.parse_args()
 
-  ClariusStreamer.configure("192.168.1.1", "5828", "/Users/jileihao")
+  ClariusStreamer.configure("192.168.1.1", 5828, "/Users/jileihao")
   ClariusStreamer.start()
 
   run_capture(options)

@@ -1,6 +1,7 @@
 import sys
 import os
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import pyclariuscast
 from PIL import Image
 import queue
@@ -131,16 +132,20 @@ def configure(ip, port, path, width=512, height=512):
     CASTER.init(path, width, height)
   
 def start():
+  global CASTER
   CASTER.connect(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port, "research")
   print("-- [Clarius Streamer] Connected to probe at {0}:{1}".format(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port))
 
 def stop():
+  global CASTER
   CASTER.destroy()
   print("-- [Clarius Streamer] Caster destroyed")
 
 def get_frame():
+  global FRAME_QUEUE
+
   if not FRAME_QUEUE.empty():
-    return FRAME_QUEUE[-1]  # Get the most recent frame
+    return FRAME_QUEUE.queue[-1]  # Access the most recent frame using the `queue` attribute
   else:
     return None
 
