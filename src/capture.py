@@ -125,12 +125,14 @@ def run_capture(options):
       # Should achieve 30 FPS. Frame time (runtime for each iteration) should be less than 33ms
       while True:
         # screenshot = sct.grab(monitor)
-        screenshot = ClariusStreamer.get_frame()
+        frame_data = ClariusStreamer.get_frame()
 
-        if screenshot is None:
+        if frame_data is None:
           continue
 
-        orig_frame = np.array(screenshot)
+        image = frame_data.image
+
+        orig_frame = np.array(image)
         orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
 
         h, w = orig_gray.shape
@@ -271,6 +273,7 @@ def main():
   options = parser.parse_args()
 
   ClariusStreamer.configure("192.168.1.1", 5828, "/Users/jileihao")
+  ClariusStreamer.set_print_debug_info(True)
   ClariusStreamer.start()
 
   run_capture(options)
