@@ -6,13 +6,13 @@ import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
 import threading
-import macos_window_helpers as mwh
-import landmark_prediction as lp
-import pose_classification as pc
-import image_helpers as ih
-from frame_buffer import FrameBuffer
-from lvef_prediction import LVEFPredictor
-from application_settings import ApplicationSettings
+import data_access.screen_capture.macos_window_helpers as mwh
+import inference.landmark.landmark_prediction as lp
+import inference.pose_classification.pose_classification as pc
+import ui.image_helpers as ih
+from common.frame_buffer import FrameBuffer
+from inference.lvef.lvef_prediction import LVEFPredictor
+from common.application_settings import ApplicationSettings
 import requests
 from queue import Queue
 import data_access.clarius.clarius_streamer as ClariusStreamer
