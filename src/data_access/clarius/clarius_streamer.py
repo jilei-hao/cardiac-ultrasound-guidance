@@ -1,8 +1,4 @@
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-import pyclariuscast
+import data_access.clarius.pyclariuscast as pyclariuscast
 from PIL import Image
 import queue
 from data_access.frame_data import FrameData
@@ -206,8 +202,7 @@ if __name__ == "__main__":
   port = 5828
 
   # get home path
-  path = os.path.expanduser("~/")
-
+  path = 'research'
 
   # create a ClariusStreamer instance
   configure(ip, port, path, 512, 512)

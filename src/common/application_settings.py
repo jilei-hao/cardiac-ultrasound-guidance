@@ -21,6 +21,7 @@ class ApplicationSettings:
   """
   def __init__(self):
     self.result_window_dimensions = (512, 512)
+    self.input_window_bbox = {"top": 60, "left": 45, "width": 450, "height": 650}
     self.frame_dimensions = (112, 112)
     self.run_lvef = False
     self.print_fps = False
@@ -30,6 +31,7 @@ class ApplicationSettings:
     self.run_image_upload = False
     # add hotkey to NOT show border (default is True)
     self.show_border = True
+    self.print_debug_info = False
 
   def increment_landmark_radius(self):
     self.landmark_radius += 1
