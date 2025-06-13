@@ -147,7 +147,7 @@ def buttonsFn(button, clicks):
   return
 
 
-## Streamer API Callback Functions ==================
+## Streamer API Functions ==================
 
 def configure(ip, port, path, width=512, height=512):
   global CASTER, CLARIUS_SETTINGS  # Ensure global variables are updated
