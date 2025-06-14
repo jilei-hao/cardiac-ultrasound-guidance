@@ -4,6 +4,10 @@ import time
 import os
 import numpy as np
 import cv2
+import sys
+import termios
+import tty
+import select
 
 
 def save_result(output_data, output_dir):
@@ -16,13 +20,14 @@ def save_result(output_data, output_dir):
     return
   
   first_timestamp = output_data[0].timestamp
-  folder_name = f"{output_dir}/{first_timestamp}"
+  generated_time = time.strftime("%Y%m%d-%H%M%S", time.localtime()) + f"_{first_timestamp}"
+  folder_name = os.path.join(output_dir, generated_time)
   print(f"-- Saving data to folder: {folder_name}")
   os.makedirs(folder_name, exist_ok=True)
 
   # for each frame, save the image with timestamp
   for i, frame in enumerate(output_data):
-    image_path = os.path.join(folder_name, f"frame_{i}_{frame.timestamp}.png")
+    image_path = os.path.join(folder_name, f"frame_{i:04d}_{frame.timestamp}.png")
 
     if frame.image is not None:
       orig_frame = np.array(frame.image)
@@ -30,16 +35,13 @@ def save_result(output_data, output_dir):
       cv2.imwrite(image_path, orig_gray)
 
   # create a csv file for imu data
-  imu_file_path = os.path.join(folder_name, "imu_data.csv")
+  imu_file_path = os.path.join(folder_name, "frame.imu.csv")
   with open(imu_file_path, 'w') as imu_file:
     imu_file.write("timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz\n")
     for frame in output_data:
+      # print(frame.imu)
       if frame.imu is not None:
-        imu_data = frame.imu
-        imu_file.write(f"{frame.timestamp},{imu_data.gx},{imu_data.gy},{imu_data.gz},"
-                      f"{imu_data.ax},{imu_data.ay},{imu_data.az},"
-                      f"{imu_data.mx},{imu_data.my},{imu_data.mz},"
-                      f"{imu_data.qw},{imu_data.qx},{imu_data.qy},{imu_data.qz}\n")
+        imu_file.write(f"{frame.timestamp},{frame.imu.gx},{frame.imu.gy},{frame.imu.gz},{frame.imu.ax},{frame.imu.ay},{frame.imu.az},{frame.imu.mx},{frame.imu.my},{frame.imu.mz},{frame.imu.qw},{frame.imu.qx},{frame.imu.qy},{frame.imu.qz}\n")
   
   print(f"-- Data saved to {folder_name} with {len(output_data)} frames.")
 
@@ -50,25 +52,42 @@ def main():
   parser.add_argument("--port", type=int, default=5828, help="Port of the Clarius probe")
   parser.add_argument("--outputdir", type=str, help="Output directory for recorded data")
   parser.add_argument("--duration", type=int, default=10, help="Duration to record in seconds")
+  parser.add_argument("--interval", type=int, default=50, help="Interval in ms between frames")
 
   options = parser.parse_args()
 
   print("-- Initializing Clarius Streamer with IP: {0}, Port: {1}".format(options.ip, options.port))
-  ClariusStreamer.configure(options.ip, options.port, options.outputdir, 512, 512)
+  ClariusStreamer.configure(options.ip, options.port, 'research', 512, 512)
   ClariusStreamer.start()
 
   is_recording = False
   output_data = []
 
   while True:
+    def get_key():
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+      try:
+        tty.setraw(fd)
+        [i, _, _] = select.select([sys.stdin], [], [], 0.1)
+        if i:
+          ch = sys.stdin.read(1)
+        else:
+          ch = ''
+      finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+      return ch
+
     if not is_recording:
-      input_str = input("Press 'r' to record, 'q' to quit: ").strip().lower()
-      if input_str == 'r':
+      print("Press 'space' to record, 'q' to quit:")
+      key = ''
+      while not key:
+        key = get_key()
+      if key == ' ':
         print("-- Recording for {0} seconds...".format(options.duration))
         start_time = time.time()
         is_recording = True
-        print(f"-- Recording finished. Elapsed time: {elapsed_time:.2f} seconds.")
-      elif input_str == 'q':
+      elif key.lower() == 'q':
         print("-- Quitting...")
         ClariusStreamer.stop()
         break
@@ -79,12 +98,19 @@ def main():
     elapsed_time = time.time() - start_time
     if elapsed_time >= options.duration:
       print(f"-- Recording finished. Elapsed time: {elapsed_time:.2f} seconds.")
-      print(f"-- Saving {0} frames to folder...".format(len(output_data)))
+      print(f"-- Saving {len(output_data)} frames to folder...")
+
+      save_result(output_data, options.outputdir)
+
+      output_data = []
       
       is_recording = False
       continue
 
-    output_data.push(ClariusStreamer.get_frame())
+    output_data.append(ClariusStreamer.get_frame())
+
+    # sleep for the specified interval
+    time.sleep(options.interval / 1000.0)
 
 
 if __name__ == "__main__":

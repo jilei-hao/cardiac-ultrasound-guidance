@@ -140,3 +140,7 @@ weights/
 
 # dylib files
 *.dylib
+
+research/
+
+.DS_Store
