@@ -143,4 +143,5 @@ weights/
 
 research/
 
+# macOS system files
 .DS_Store
