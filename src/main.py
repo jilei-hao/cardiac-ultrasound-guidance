@@ -25,7 +25,7 @@ def run_event_loop(options):
   # Check source and initialize 
   if options.source == 'clarius':
     print(f"🔌 Connecting to Clarius probe at {options.clarius_ip}:{options.clarius_port}...")
-    ClariusStreamer.configure("192.168.1.1", 5828, "/Users/jileihao")
+    ClariusStreamer.configure(options.clarius_ip, options.clarius_port, "research")
     ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
     ClariusStreamer.start()
     print("✅ Connected to Clarius probe.")

@@ -2,6 +2,8 @@
 
 server_ip=141.212.114.250
 
+source initialize_envs.sh
+
 python3 src/main.py \
   --window_title "Input" \
   --upload_url http://$server_ip:8000/upload
