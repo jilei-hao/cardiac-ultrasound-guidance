@@ -10,7 +10,7 @@
 
 1. Run `bash run_scrcpy.sh` (see Additional Instructions for details)
 
-2. In another terminal window, run `bash run.sh`
+2. In another terminal window, run `bash run_main.sh`
 
 
 ## Additional Instructions
