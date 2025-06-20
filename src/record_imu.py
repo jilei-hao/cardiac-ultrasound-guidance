@@ -11,23 +11,24 @@ import select
 
 
 def save_result(output_data, output_dir):
-  # sort the data by timestamp
-  output_data.sort(key=lambda x: x.timestamp)
+  output_data.sort(key=lambda x: x.ts)
 
-  # get the first timestamp as folder name
+  # get the first ts as folder name
   if not output_data:
     print("-- No data to save.")
     return
   
-  first_timestamp = output_data[0].timestamp
-  generated_time = time.strftime("%Y%m%d-%H%M%S", time.localtime()) + f"_{first_timestamp}"
-  folder_name = os.path.join(output_dir, generated_time)
+  # a time-of-the-day timestamp (without dates) in nano second
+  # 14 digits, padded with zeros
+  first_timestamp = f"{output_data[0].timestamp:014d}"
+  folder_name = os.path.join(output_dir, first_timestamp)
+
   print(f"-- Saving data to folder: {folder_name}")
   os.makedirs(folder_name, exist_ok=True)
 
   # for each frame, save the image with timestamp
   for i, frame in enumerate(output_data):
-    image_path = os.path.join(folder_name, f"frame_{i:04d}_{frame.timestamp}.png")
+    image_path = os.path.join(folder_name, f"frame_{i:04d}_{frame.timestamp:014d}.png")
 
     if frame.image is not None:
       orig_frame = np.array(frame.image)
