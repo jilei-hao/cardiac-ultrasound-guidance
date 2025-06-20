@@ -137,3 +137,11 @@ cython_debug/
 
 
 weights/
+
+# dylib files
+*.dylib
+
+research/
+
+# macOS system files
+.DS_Store

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
--- Install `scrcpy` from: https://github.com/Genymobile/scrcpy
+-- (Optional) Install `scrcpy` from: https://github.com/Genymobile/scrcpy
 
 -- (Optional) Create links or add `adb` and `scrcpy` to PATH, or use absolute path to the executables in the following steps
 
@@ -15,38 +15,21 @@
  `pip install torch`
  `pip install mss`
  `pip install pyobjc`
- `pip install numpy`
+ `pip install "numpy<2"`
  `pip install opencv-python`
  `pip install Pillow`
  `pip install requests`
 
-## Run the Program
+## Documentations
 
-1. Run `bash run_scrcpy.sh` (see Additional Instructions for details)
+### Main Program
 
-2. In another terminal window, run `bash run.sh`
+Go to `documentation/run_main.md` for instructions running the main program for frame capture and inference
 
+### Exam Recording Utility
 
-## Additional Instructions
+Go to `documentation/run_recording.md` for instructions running the recording utility for capturing the clarius frames with imu data
 
-### How to configure scrcpy using cable
+### Clarius Setup
 
-1. Connect android device using cable
-
-2. Run `adb start-server`
-
-3. Run `scrcpy`
-
-### How to configure scrcpy using wifi
-
-1. Connect android device using cable
-
-2. Run `adb tcpip 5555`
-
-3. Run `adb shell ip route` to get device ip
-
-4. Run `adb connect <device_ip>:5555`
-
-5. Disconnect cable
-
-6. Run `scrcpy`
+Go to `documentation/clarius_setup.md` for instructions setting up connection to the clarius scanner
