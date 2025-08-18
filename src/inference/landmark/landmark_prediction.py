@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
-from inference.landmark.landmark_model import ResNet34UNet
+from .landmark_model import ResNet34UNet
 
 
 def softmax_2d(logits):
