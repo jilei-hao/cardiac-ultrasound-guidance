@@ -8,6 +8,7 @@ import threading
 import inference.landmark.landmark_prediction as lp
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
+import inference.inference_helper as ihp
 from common.frame_buffer import FrameBuffer
 from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
@@ -93,7 +94,11 @@ def run_event_loop(options):
   if options.save and not os.path.exists(options.save_folder):
     os.makedirs(options.save_folder)
 
-  landmark_model, device = lp.configure_torch()
+  # Initialize Inference Modules
+  device = ihp.get_device()
+  print(f"Using device: {device}")
+
+  landmark_model = lp.configure_torch(device)
   classifier_model, preprocess = pc.load_pretrained_model(device) 
   
   # Initialize the LVEF predictor
