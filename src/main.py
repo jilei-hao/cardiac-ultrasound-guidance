@@ -5,7 +5,15 @@ import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
 import threading
-import inference.landmark.landmark_prediction as lp
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'inference'))
+# Import with proper module name
+import importlib.util
+spec = importlib.util.spec_from_file_location("fourch_landmark_pipeline", 
+    os.path.join(os.path.dirname(__file__), 'inference', '4ch-landmark', '4ch_landmark_pipeline.py'))
+lp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lp)
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
 from common.frame_buffer import FrameBuffer
@@ -93,7 +101,8 @@ def run_event_loop(options):
   if options.save and not os.path.exists(options.save_folder):
     os.makedirs(options.save_folder)
 
-  landmark_model, device = lp.configure_torch()
+  landmark_pipeline = lp.configure_4ch_landmark_pipeline()
+  device = landmark_pipeline.device
   classifier_model, preprocess = pc.load_pretrained_model(device) 
   
   # Initialize the LVEF predictor
@@ -156,7 +165,8 @@ def run_event_loop(options):
       else:
         crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
-      resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
+      # Use 512x512 for 4-chamber segmentation
+      resized_frame = cv2.resize(crop_frame, (512, 512), interpolation=cv2.INTER_AREA)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
@@ -166,7 +176,7 @@ def run_event_loop(options):
         cv2.imwrite(filename, resized_frame)
         print(f"✅ Saved: {filename}")
 
-      cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+      cla, landmarks_tensor = lp.run_4ch_core_prediction(landmark_pipeline, resized_frame)
 
       # ---- Run Pose Classification ----
       if frame_count % 3 == 0:
@@ -260,10 +270,14 @@ def run_event_loop(options):
 
       frame_count += 1
 
+      # Always print FPS
+      elapsed_time = time.time() - start_time
+      fps = frame_count / elapsed_time
+      print(f"FPS: {fps:.2f}")
+      
+      # Also print FPS when the flag is enabled (for backward compatibility)
       if app_settings.print_fps:
-        elapsed_time = time.time() - start_time
-        fps = frame_count / elapsed_time
-        print(f"FPS: {fps:.2f}")
+        print(f"FPS (flag enabled): {fps:.2f}")
 
   except KeyboardInterrupt:
     print("\n🛑 Capture stopped manually.")

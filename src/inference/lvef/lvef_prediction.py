@@ -26,7 +26,7 @@ class LVEFPredictor:
         if lvef_model_weight_path is not None:
             print("Loading checkpoint {}".format(lvef_model_weight_path))
             checkpoint = torch.load(lvef_model_weight_path, map_location=device)
-            if device.type == "cuda":
+            if device == "cuda":
                 self.model.load_state_dict(checkpoint['state_dict'])
             else:
                 # Strip "module." from keys for CPU/MPS
