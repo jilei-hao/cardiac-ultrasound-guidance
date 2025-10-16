@@ -145,3 +145,10 @@ research/
 
 # macOS system files
 .DS_Store
+# media
+src/inference/4ch-landmark/test.mp4
+*.mp4
+
+# media
+src/inference/4ch-landmark/test.mp4
+*.mp4
