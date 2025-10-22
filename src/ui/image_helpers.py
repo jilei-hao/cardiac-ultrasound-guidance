@@ -139,7 +139,7 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
             # Draw landmark points (skip high uncertainty points)
             for x, y, uncertainty in scaled_landmarks:
                 # Skip high uncertainty landmarks
-                if uncertainty > 0.9:
+                if uncertainty > 0.95:
                     continue
                     
                 # Use raw uncertainty (0-1 range) for color adjustment

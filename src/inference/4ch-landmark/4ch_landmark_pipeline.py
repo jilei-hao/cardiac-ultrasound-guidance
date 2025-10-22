@@ -305,7 +305,7 @@ class FourChamberLandmarkPipeline:
         return classification_color, landmarks_tensor
 
 
-def configure_4ch_landmark_pipeline(model_path: str = "weights/4ch-seg-251015.pt", 
+def configure_4ch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021.pt", 
                                    device: str = "auto") -> FourChamberLandmarkPipeline:
     """
     Configure the 4-chamber landmark pipeline.
