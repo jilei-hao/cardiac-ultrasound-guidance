@@ -12,13 +12,18 @@
 
  `conda activate lumify-streaming`
 
- `pip install torch`
- `pip install mss`
- `pip install pyobjc`
- `pip install "numpy<2"`
- `pip install opencv-python`
- `pip install Pillow`
- `pip install requests`
+ `pip install -r requirements.txt`
+
+ **Alternative:** Install packages individually:
+ ```
+ pip install torch
+ pip install mss
+ pip install pyobjc
+ pip install "numpy<2"
+ pip install opencv-python
+ pip install Pillow
+ pip install requests
+ ```
 
 ## Documentations
 
@@ -33,3 +38,7 @@ Go to `documentation/run_recording.md` for instructions running the recording ut
 ### Clarius Setup
 
 Go to `documentation/clarius_setup.md` for instructions setting up connection to the clarius scanner
+
+### Dependencies and Version Management
+
+Go to `documentation/requirements.md` for information about managing dependencies, checking package versions (including NumPy), and troubleshooting
