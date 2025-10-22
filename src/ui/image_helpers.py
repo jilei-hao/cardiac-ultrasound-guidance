@@ -62,10 +62,10 @@ def adjust_color_by_uncertainty(base_bgr, uncertainty, s_min=60, s_max=255, v_mi
     
     return hsv_to_bgr_tuple((h, s, v))
 
-def draw_contour_with_landmarks(overlay, landmarks, base_bgr, ere_threshold=6, thickness=6):
+def draw_contour_with_landmarks(overlay, landmarks, base_bgr, uncertainty_threshold=0.8, thickness=6):
     """
     Draw contour lines connecting landmarks with uncertainty-based coloring.
-    No oversampling - direct lines between consecutive points.
+    Skip connections involving high uncertainty landmarks.
     """
     if len(landmarks) < 2:
         return
@@ -75,13 +75,17 @@ def draw_contour_with_landmarks(overlay, landmarks, base_bgr, ere_threshold=6, t
         j = (i + 1) % len(landmarks)  # Connect last point to first
         
         # Get uncertainty for this segment
-        _, _, ere1 = landmarks[i]
-        _, _, ere2 = landmarks[j]
-        avg_uncertainty = (ere1 + ere2) / 2.0
-        uncertainty_normalized = min(avg_uncertainty / ere_threshold, 1.0)
+        _, _, uncertainty1 = landmarks[i]
+        _, _, uncertainty2 = landmarks[j]
         
-        # Adjust color based on uncertainty
-        color = adjust_color_by_uncertainty(base_bgr, uncertainty_normalized)
+        # Skip connections involving high uncertainty landmarks
+        if uncertainty1 > uncertainty_threshold or uncertainty2 > uncertainty_threshold:
+            continue
+            
+        avg_uncertainty = (uncertainty1 + uncertainty2) / 2.0
+        
+        # Adjust color based on uncertainty (raw uncertainty is 0-1)
+        color = adjust_color_by_uncertainty(base_bgr, avg_uncertainty)
         
         # Get start and end points
         x1, y1, _ = landmarks[i]
@@ -129,13 +133,16 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
             # Get base color for this chamber
             base_color = chamber_colors[chamber_idx]
             
-            # Draw contour lines connecting landmarks
-            draw_contour_with_landmarks(overlay, scaled_landmarks, base_color, ere_threshold, thickness=6)
+            # Draw contour lines connecting landmarks (skip high uncertainty connections)
+            draw_contour_with_landmarks(overlay, scaled_landmarks, base_color, uncertainty_threshold=0.8, thickness=6)
             
-            # Draw ALL landmark points as small solid dots
-            for x, y, ere_val in scaled_landmarks:
-                # Calculate uncertainty for color adjustment (use ere_threshold as max for normalization)
-                uncertainty = min(ere_val / ere_threshold, 1.0)
+            # Draw landmark points (skip high uncertainty points)
+            for x, y, uncertainty in scaled_landmarks:
+                # Skip high uncertainty landmarks
+                if uncertainty > 0.9:
+                    continue
+                    
+                # Use raw uncertainty (0-1 range) for color adjustment
                 color = adjust_color_by_uncertainty(base_color, uncertainty)
                 
                 # Draw slightly larger solid dot

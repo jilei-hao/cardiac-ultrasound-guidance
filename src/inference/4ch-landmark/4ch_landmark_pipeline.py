@@ -229,15 +229,14 @@ class FourChamberLandmarkPipeline:
             if label in landmarks_by_label:
                 label_landmarks = landmarks_by_label[label]
                 for lm in label_landmarks:
-                    # Convert uncertainty to ERE-like value (lower uncertainty = lower ERE)
-                    ere_value = lm['uncertainty'] * 10.0  # Scale uncertainty to ERE range
-                    tensor_landmarks.append([lm['x'], lm['y'], ere_value])
+                    # Use raw uncertainty value (0-1 range)
+                    tensor_landmarks.append([lm['x'], lm['y'], lm['uncertainty']])
             else:
                 # Fill with dummy values if no landmarks for this label
                 # Use 24 for LV (label 50), 12 for others
                 n_dummy = 24 if label == 50 else self.n_landmarks
                 for _ in range(n_dummy):
-                    tensor_landmarks.append([0, 0, 1000.0])  # High ERE for missing landmarks
+                    tensor_landmarks.append([0, 0, 1.0])  # High uncertainty for missing landmarks
         
         return torch.tensor(tensor_landmarks, dtype=torch.float32)
     
