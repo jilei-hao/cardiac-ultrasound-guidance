@@ -1,0 +1,19 @@
+# Core numerical and imaging
+numpy
+opencv-python
+mss
+Pillow
+matplotlib
+
+# Deep learning
+# Choose the appropriate PyTorch build for your system if this default wheel is unsuitable.
+torch
+torchvision
+
+# Utilities
+requests
+
+# macOS window management (required for screen capture helpers)
+pyobjc
+pyobjc-framework-Quartz
+pyobjc-framework-AppKit
