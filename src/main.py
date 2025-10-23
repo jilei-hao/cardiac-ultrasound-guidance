@@ -195,6 +195,8 @@ def run_event_loop(options):
 
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
       vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
+      vis_frame = ih.draw_3axis_vector(vis_frame)
+      vis_frame = ih.draw_stl_model(vis_frame, "src/ui/UsProbe_Telemed_L12.stl", position=(70, 70), size=80, rotation_angle=-1.5708)
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       

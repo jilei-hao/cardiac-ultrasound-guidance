@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+from .mesh_helper import draw_stl_simplified
 
 def draw_circle_on_image(center, radius, image, bgr):
     # Draw a circle on the image
@@ -44,6 +45,25 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
 
     return vis_frame
 
+def draw_3axis_vector(input_frame):
+    # Draw a static 3-axis vector in the top-left corner
+    start_x, start_y = 70,70  # Starting position
+    axis_length = 100  # Length of each axis
+    
+    # X-axis (soft blue) - horizontal
+    cv2.arrowedLine(input_frame, (start_x, start_y), (start_x + axis_length, start_y), (200, 150, 100), 3)
+    cv2.putText(input_frame, 'X', (start_x + axis_length + 5, start_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 150, 100), 2)
+    
+    # Y-axis (soft pink) - vertical
+    cv2.arrowedLine(input_frame, (start_x, start_y), (start_x, start_y + axis_length), (200, 180, 220), 3)
+    cv2.putText(input_frame, 'Y', (start_x - 15, start_y + axis_length + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 180, 220), 2)
+    
+    # Z-axis (soft mint) - diagonal
+    cv2.arrowedLine(input_frame, (start_x, start_y), (start_x + axis_length//2, start_y + axis_length//2), (150, 220, 200), 3)
+    cv2.putText(input_frame, 'Z', (start_x + axis_length//2 + 5, start_y + axis_length//2 + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 220, 200), 2)
+    
+    return input_frame
+
 def draw_text_on_frame(input_frame, text):
     # Define the font and scale
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -62,4 +82,8 @@ def draw_text_on_frame(input_frame, text):
     cv2.putText(input_frame, text, (text_x, text_y), font, font_scale, font_color, thickness)
 
     return input_frame
+
+def draw_stl_model(input_frame, stl_path, position=(150, 150), size=80, rotation_angle=0):
+    """Draw STL model as object of the axis"""
+    return draw_stl_simplified(input_frame, stl_path, position, size, rotation_angle, color=(180, 200, 220), thickness=1)
     
