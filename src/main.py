@@ -162,7 +162,7 @@ def run_event_loop(options):
         qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
       else:
         # Default quaternion values (no rotation)
-        qw, qx, qy, qz = 1.0, 0.0, 0.0, 1.0
+        qw, qx, qy, qz = 1.0, 1.0, 0.0, 0.0
       # print(f"Quaternion: qw={qw:.4f}, qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}")
       
       
@@ -222,9 +222,10 @@ def run_event_loop(options):
       
       # Calculate current FPS for LOD
       current_fps = None
-      if app_settings.print_fps:
-        elapsed_time = time.time() - start_time
-        current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
+ 
+      elapsed_time = time.time() - start_time
+      current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
+      print(f"Current FPS: {current_fps}")
       
       vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps)
       if app_settings.show_border:

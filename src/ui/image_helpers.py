@@ -147,7 +147,7 @@ def draw_text_on_frame(input_frame, text):
     return input_frame
 
 class STLAxisRenderer:
-    """Efficient STL and axis renderer with pre-computed transformations and LOD"""
+    """STL and axis renderer with pre-computed transformations and decimation"""
     
     def __init__(self, stl_path, position=(100, 100), size=80):
         self.stl_path = stl_path
@@ -177,16 +177,16 @@ class STLAxisRenderer:
             
         # Pre-compute coordinate transformation matrix
         self.coord_transform = np.array([
-            [0, 1, 0],  # X' = X (X stays the same - right)
-            [1, 0, 0],  # Y' = Z (Y becomes Z - into plane becomes up) 
-            [0, 0, 1]   # Z' = Y (Z becomes Y - up becomes into plane)
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 0, 1]
         ], dtype=np.float32)
         
         # Pre-compute mirror transformation matrix
         self.mirror_transform = np.array([
-            [1, 0, 0],  # X' = -X (mirror X)
-            [0, 1, 0],   # Y' = Y (Y stays the same)
-            [0, 0, 1]    # Z' = Z (Z stays the same)
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1]
         ], dtype=np.float32)
         
         # Pre-compute combined transformation matrix
@@ -221,7 +221,7 @@ class STLAxisRenderer:
             return
             
         # LOD levels: 100%, 75%, 50%, 25% of vertices
-        lod_levels = [1.0, 0.75, 0.5, 0.25]
+        lod_levels = [1.0, 0.5, 0.25, 0.1]
         
         for lod in lod_levels:
             if lod == 1.0:
@@ -233,28 +233,18 @@ class STLAxisRenderer:
                     step = len(self.normalized_vertices) // num_vertices
                     self.lod_vertices[lod] = self.normalized_vertices[::max(1, step)]
     
-    def get_lod_level(self, fps=None, distance=None):
-        """Determine LOD level based on performance or distance"""
+    def get_lod_level(self, fps=None):
+        """Determine LOD level based on performance"""
         if fps is not None:
-            if fps < 15:
-                return 0.25  # Very low quality
-            elif fps < 25:
-                return 0.5   # Low quality
-            elif fps < 35:
-                return 0.75  # Medium quality
-            else:
-                return 1.0   # High quality
-        
-        # Distance-based LOD (if distance provided)
-        if distance is not None:
-            if distance > 200:
+            if fps < 5:
+                return 0.1
+            elif fps < 15:
                 return 0.25
-            elif distance > 100:
+            elif fps < 20:
                 return 0.5
-            elif distance > 50:
-                return 0.75
             else:
                 return 1.0
+    
         
         return 1.0  # Default to high quality
     

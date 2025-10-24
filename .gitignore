@@ -144,4 +144,5 @@ weights/
 research/
 
 # macOS system files
-.DS_Store
+.DS_Storedinov3/
+dinov3/
