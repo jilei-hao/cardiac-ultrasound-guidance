@@ -145,7 +145,7 @@ def run_event_loop(options):
       imu = frame_data.imu
       
       qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
-      print(f"Quaternion: qw={qw:.4f}, qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}")
+      # print(f"Quaternion: qw={qw:.4f}, qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}")
       
       
       orig_frame = np.array(image)
