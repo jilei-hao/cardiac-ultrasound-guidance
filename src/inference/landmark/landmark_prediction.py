@@ -36,20 +36,20 @@ def compute_ere(prob_map, pred_x, pred_y, threshold=0.03):
     return float(ERE)
 
 
-def configure_torch():
+def configure_torch(device):
 
     model = ResNet34UNet(num_landmarks=47)
   
     # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
     model_path = "weights/landmark_prediction.pth"
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    
 
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
 
-    return model, device
+    return model
 
 
 def run_core_prediction(model, device, input_frame):
