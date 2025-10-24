@@ -29,8 +29,8 @@ def load_stl_vertices(stl_path):
     return np.array(vertices)
 
 
-def project_3d_to_2d(vertices, position, size, rotation_angle=0.0):
-    """Project 3D vertices to 2D screen coordinates. rotation_angle in radians."""
+def project_3d_to_2d(vertices, position, size, rotation_matrix=None):
+    """Project 3D vertices to 2D screen coordinates with full 3D rotation matrix."""
     if vertices is None or len(vertices) == 0:
         return np.empty((0, 2), dtype=np.int32)
 
@@ -50,26 +50,57 @@ def project_3d_to_2d(vertices, position, size, rotation_angle=0.0):
     max_range = float(np.max(range_vals)) if np.all(range_vals > 0) else 1.0
     v = v / (max_range if max_range > 0 else 1.0)
 
-    # rotate around Z
-    c, s = np.cos(rotation_angle), np.sin(rotation_angle)
-    Rz = np.array([[c, -s, 0],
-                   [s,  c, 0],
-                   [0,  0, 1]], dtype=np.float32)
-    v = v @ Rz.T
 
-    # scale & orthographic project
-    v = v * float(size)
-    pts = v[:, :2] + np.asarray(position, dtype=np.float32)
+    coordinate_transform = np.array([
+        [0, 1, 0],  
+        [-1, 0, 0], 
+        [0, 0, 1]   
+    ], dtype=np.float32)
+    
+
+    mirror_transform = np.array([
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1]  
+    ], dtype=np.float32)
+    
+
+    v = v @ coordinate_transform.T
+    # v = v @ mirror_transform.T
+
+ 
+    if rotation_matrix is not None:
+
+        R_flipped = rotation_matrix.copy()
+        # R_flipped[0, :] = -R_flipped[0, :]  # Flip X row
+        # R_flipped[:, 0] = -R_flipped[:, 0]  # Flip X column
+        v = v @ R_flipped.T
+    else:
+        # Fallback to identity matrix (no rotation)
+        pass
+
+    alpha = 0.35  
+    def proj_2d(v):
+        px = v[0] + alpha * v[1]
+        py = -v[2] 
+        return np.array([px, py])
+    
+    # Apply 2D projection
+    v_2d = np.array([proj_2d(vertex) for vertex in v])
+    
+    # scale & position
+    v_2d = v_2d * float(size)
+    pts = v_2d + np.asarray(position, dtype=np.float32)
     pts = np.clip(pts, 0, 10000)
     return pts.astype(np.int32)
 
 
-def draw_stl_simplified(image, stl_path, position=(150, 150), size=80, rotation_angle=0,
+def draw_stl_simplified(image, stl_path, position=(150, 150), size=80, rotation_matrix=None,
                         color=(255, 255, 255), thickness=2):
-    """Draw STL wireframe."""
+    """Draw STL wireframe with full 3D rotation."""
     vertices = load_stl_vertices(stl_path)
-    projected = project_3d_to_2d(vertices, position, size, rotation_angle)
-    
+    projected = project_3d_to_2d(vertices, position, size, rotation_matrix)
+
     # Draw triangle edges
     for i in range(0, len(projected), 3):
         if i + 2 < len(projected):
@@ -77,5 +108,5 @@ def draw_stl_simplified(image, stl_path, position=(150, 150), size=80, rotation_
             cv2.line(image, tuple(p0), tuple(p1), color, thickness)
             cv2.line(image, tuple(p1), tuple(p2), color, thickness)
             cv2.line(image, tuple(p2), tuple(p0), color, thickness)
-    
+
     return image
