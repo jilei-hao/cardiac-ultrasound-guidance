@@ -11,7 +11,7 @@ import select
 
 
 def save_result(output_data, output_dir):
-  output_data.sort(key=lambda x: x.ts)
+  output_data.sort(key=lambda x: x.timestamp)
 
   # get the first ts as folder name
   if not output_data:

@@ -141,7 +141,13 @@ def run_event_loop(options):
         continue
 
       image = frame_data.image
-
+      
+      imu = frame_data.imu
+      
+      qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
+      # print(f"Quaternion: qw={qw:.4f}, qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}")
+      
+      
       orig_frame = np.array(image)
       orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
 
@@ -195,6 +201,8 @@ def run_event_loop(options):
 
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
       vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
+      vis_frame = ih.draw_3axis_vector(vis_frame, qw, qx, qy, qz)
+      vis_frame = ih.draw_stl_model(vis_frame, "src/ui/UsProbe_Telemed_L12.stl", position=(100, 100), size=80, qw=qw, qx=qx, qy=qy, qz=qz)
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       
