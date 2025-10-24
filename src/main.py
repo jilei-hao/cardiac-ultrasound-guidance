@@ -22,6 +22,11 @@ classifier_queue = Queue()
 
 def run_event_loop(options):
   app_settings = ApplicationSettings() # settings for realtime controls
+  
+  # STL rendering configuration
+  stl_path = "src/ui/UsProbe_Telemed_L12.stl"
+  stl_position = (100, 100)
+  stl_size = 80
 
   # Check source and initialize 
   if options.source == 'clarius':
@@ -111,6 +116,10 @@ def run_event_loop(options):
   # Initialize the frame buffer
   print("Initializing frame buffer...")
   frame_buffer = FrameBuffer(buffer_size=100)
+  
+  # Initialize STL renderer (loads STL once for efficiency)
+  print("Initializing STL renderer...")
+  stl_renderer = ih.STLAxisRenderer(stl_path, stl_position, stl_size)
 
   # Initialize lvef thread runner
   lvef_thread = None
@@ -147,9 +156,13 @@ def run_event_loop(options):
 
       image = frame_data.image
       
-      imu = frame_data.imu
-      
-      qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
+      # Get quaternion data - use IMU data if available, otherwise use default values
+      if options.source == 'clarius' and frame_data.imu is not None:
+        imu = frame_data.imu
+        qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
+      else:
+        # Default quaternion values (no rotation)
+        qw, qx, qy, qz = 1.0, 1.0, 0.0, 0.0
       # print(f"Quaternion: qw={qw:.4f}, qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}")
       
       
@@ -206,8 +219,15 @@ def run_event_loop(options):
 
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
       vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
-      vis_frame = ih.draw_3axis_vector(vis_frame, qw, qx, qy, qz)
-      vis_frame = ih.draw_stl_model(vis_frame, "src/ui/UsProbe_Telemed_L12.stl", position=(100, 100), size=80, qw=qw, qx=qx, qy=qy, qz=qz)
+      
+      # Calculate current FPS for LOD
+      current_fps = None
+ 
+      elapsed_time = time.time() - start_time
+      current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
+      print(f"Current FPS: {current_fps}")
+      
+      vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps)
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       

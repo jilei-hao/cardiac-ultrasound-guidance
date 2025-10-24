@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import math
-from .mesh_helper import draw_stl_simplified
+from .mesh_helper import load_stl_vertices, project_3d_to_2d, draw_stl_simplified
 
 def draw_circle_on_image(center, radius, image, bgr):
     # Draw a circle on the image
@@ -146,8 +146,228 @@ def draw_text_on_frame(input_frame, text):
 
     return input_frame
 
+class STLAxisRenderer:
+    """STL and axis renderer with pre-computed transformations and decimation"""
+    
+    def __init__(self, stl_path, position=(100, 100), size=80):
+        self.stl_path = stl_path
+        self.position = position
+        self.size = size
+        self.vertices = None
+        self.normalized_vertices = None
+        self.lod_vertices = {}  # Cache for different LOD levels
+        self.coord_transform = None
+        self.mirror_transform = None
+        self.load_stl()
+        self.precompute_transformations()
+    
+    def load_stl(self):
+        """Load STL vertices once"""
+        try:
+            self.vertices = load_stl_vertices(self.stl_path)
+            print(f"✅ Loaded STL with {len(self.vertices)} vertices")
+        except Exception as e:
+            print(f"❌ Failed to load STL: {e}")
+            self.vertices = None
+    
+    def precompute_transformations(self):
+        """Pre-compute all transformation matrices"""
+        if self.vertices is None:
+            return
+            
+        # Pre-compute coordinate transformation matrix
+        self.coord_transform = np.array([
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
+        # Pre-compute mirror transformation matrix
+        self.mirror_transform = np.array([
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        
+        # Pre-compute combined transformation matrix
+        self.combined_transform = self.mirror_transform @ self.coord_transform
+        
+        # Pre-normalize vertices (center and scale to unit cube)
+        self.normalized_vertices = self._normalize_vertices()
+        
+        # Pre-compute LOD levels
+        self._precompute_lod_levels()
+        
+        print("✅ Pre-computed all transformations and LOD levels")
+    
+    def _normalize_vertices(self):
+        """Normalize vertices to unit cube"""
+        if self.vertices is None:
+            return None
+            
+        v = self.vertices.copy()
+        # Center vertices
+        center = (v.min(axis=0) + v.max(axis=0)) / 2.0
+        v = v - center
+        # Scale to unit cube
+        max_range = float(np.max(v.max(axis=0) - v.min(axis=0)))
+        if max_range > 0:
+            v = v / max_range
+        return v
+    
+    def _precompute_lod_levels(self):
+        """Pre-compute different LOD levels"""
+        if self.normalized_vertices is None:
+            return
+            
+        # LOD levels: 100%, 75%, 50%, 25% of vertices
+        lod_levels = [1.0, 0.5, 0.25, 0.1]
+        
+        for lod in lod_levels:
+            if lod == 1.0:
+                self.lod_vertices[lod] = self.normalized_vertices.copy()
+            else:
+                # Sample vertices based on LOD level
+                num_vertices = int(len(self.normalized_vertices) * lod)
+                if num_vertices > 0:
+                    step = len(self.normalized_vertices) // num_vertices
+                    self.lod_vertices[lod] = self.normalized_vertices[::max(1, step)]
+    
+    def get_lod_level(self, fps=None):
+        """Determine LOD level based on performance"""
+        if fps is not None:
+            if fps < 5:
+                return 0.1
+            elif fps < 15:
+                return 0.25
+            elif fps < 20:
+                return 0.5
+            else:
+                return 1.0
+    
+        
+        return 1.0  # Default to high quality
+    
+    def draw_combined(self, input_frame, qw=1.0, qx=0.0, qy=0.0, qz=0.0, fps=None):
+        """Draw both axis and STL model efficiently with LOD"""
+        # Convert quaternion to rotation matrix
+        R = quaternion_to_rotation_matrix(qw, qx, qy, qz)
+        
+        # Draw 3-axis vector
+        input_frame = self.draw_3axis_vector(input_frame, R)
+        
+        # Draw STL model if vertices are loaded
+        if self.vertices is not None:
+            input_frame = self.draw_stl_model_optimized(input_frame, R, fps)
+        
+        return input_frame
+    
+    def draw_3axis_vector(self, input_frame, R):
+        """Draw 3-axis vector with given rotation matrix"""
+        start_x, start_y = self.position
+        axis_length = self.size * 0.75  # Scale axis length relative to STL size
+        
+        # World axes (right-handed)
+        x_axis = np.array([1.0, 0.0, 0.0])
+        y_axis = np.array([0.0, 1.0, 0.0])
+        z_axis = np.array([0.0, 0.0, 1.0])
+        
+        # Rotate axes
+        x_rot = R @ x_axis
+        y_rot = R @ y_axis
+        z_rot = R @ z_axis
+        
+        # Simple axonometric projection
+        alpha = 0.35
+        def proj(v):
+            px = start_x + int((v[0] + alpha * v[1]) * axis_length)
+            py = start_y - int(v[2] * axis_length)
+            return (px, py)
+        
+        origin = (start_x, start_y)
+        x_end = proj(x_rot)
+        y_end = proj(y_rot)
+        z_end = proj(z_rot)
+        
+        # Draw axes
+        cv2.arrowedLine(input_frame, origin, x_end, (200, 150, 100), 3)
+        cv2.putText(input_frame, 'x', (x_end[0] + 6, x_end[1] + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 150, 100), 2)
+        
+        cv2.arrowedLine(input_frame, origin, y_end, (200, 180, 220), 3)
+        cv2.putText(input_frame, 'y', (y_end[0] + 6, y_end[1] + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 180, 220), 2)
+        
+        cv2.arrowedLine(input_frame, origin, z_end, (150, 220, 200), 3)
+        cv2.putText(input_frame, 'z', (z_end[0] + 6, z_end[1] + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 220, 200), 2)
+        
+        return input_frame
+    
+    def draw_stl_model_optimized(self, input_frame, R, fps=None):
+        """Draw STL model with pre-computed transformations and LOD"""
+        if self.normalized_vertices is None:
+            return input_frame
+        
+        # Get LOD level based on FPS
+        lod_level = self.get_lod_level(fps=fps)
+        
+        # Get vertices for this LOD level
+        if lod_level in self.lod_vertices:
+            vertices = self.lod_vertices[lod_level]
+        else:
+            vertices = self.normalized_vertices
+        
+        # Apply pre-computed combined transformation
+        v = vertices @ self.combined_transform.T
+        
+        # Apply rotation (only matrix multiplication needed)
+        v = v @ R.T
+        
+        # Project to 2D (optimized)
+        projected = self._project_vertices_optimized(v)
+        
+        # Draw triangle edges
+        self._draw_triangles_optimized(input_frame, projected)
+        
+        return input_frame
+    
+    def _project_vertices_optimized(self, vertices):
+        """Optimized 2D projection"""
+        if len(vertices) == 0:
+            return np.empty((0, 2), dtype=np.int32)
+        
+        # Simple axonometric projection: (x, y, z) -> (x + α*y, -z)
+        alpha = 0.35
+        px = vertices[:, 0] + alpha * vertices[:, 1]
+        py = -vertices[:, 2]  # screen Y grows downward
+        
+        # Scale and position
+        v2d = np.stack([px, py], axis=1) * float(self.size)
+        v2d = v2d + np.asarray(self.position, dtype=np.float32)
+        v2d = np.clip(v2d, 0, 10000)
+        
+        return v2d.astype(np.int32)
+    
+    def _draw_triangles_optimized(self, input_frame, projected):
+        """Optimized triangle drawing"""
+        color = (180, 200, 220)
+        thickness = 2
+        
+        # Draw triangles in batches for better performance
+        for i in range(0, len(projected), 3):
+            if i + 2 < len(projected):
+                p0, p1, p2 = projected[i], projected[i+1], projected[i+2]
+                cv2.line(input_frame, tuple(p0), tuple(p1), color, thickness)
+                cv2.line(input_frame, tuple(p1), tuple(p2), color, thickness)
+                cv2.line(input_frame, tuple(p2), tuple(p0), color, thickness)
+    
+    def draw_stl_model(self, input_frame, R):
+        """Legacy method for backward compatibility"""
+        return self.draw_stl_model_optimized(input_frame, R, fps=None)
+
 def draw_stl_model(input_frame, stl_path, position=(150, 150), size=80, qw=1.0, qx=0.0, qy=0.0, qz=0.0):
-    """Draw STL model as object of the axis with quaternion rotation"""
+    """Legacy function for backward compatibility"""
     # Convert quaternion to full 3D rotation matrix
     R = quaternion_to_rotation_matrix(qw, qx, qy, qz)
     
