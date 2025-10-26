@@ -248,13 +248,19 @@ class STLAxisRenderer:
         
         return 1.0  # Default to high quality
     
-    def draw_combined(self, input_frame, qw=1.0, qx=0.0, qy=0.0, qz=0.0, fps=None):
+    def draw_combined(self, input_frame, qw=1.0, qx=0.0, qy=0.0, qz=0.0, fps=None, predicted_rotation_matrix=None):
         """Draw both axis and STL model efficiently with LOD"""
         # Convert quaternion to rotation matrix
         R = quaternion_to_rotation_matrix(qw, qx, qy, qz)
         
-        # Draw 3-axis vector
+        # Draw 3-axis vector (IMU-based)
         input_frame = self.draw_3axis_vector(input_frame, R)
+        
+        # Draw predicted rotation axes if available (overlay on same position)
+        if predicted_rotation_matrix is not None:
+            # Use inverse of predicted rotation matrix
+            R_pred = np.linalg.inv(predicted_rotation_matrix)
+            input_frame = self.draw_3axis_vector_predicted(input_frame, R_pred, R)
         
         # Draw STL model if vertices are loaded
         if self.vertices is not None:
@@ -289,20 +295,101 @@ class STLAxisRenderer:
         y_end = proj(y_rot)
         z_end = proj(z_rot)
         
-        # Draw axes
-        cv2.arrowedLine(input_frame, origin, x_end, (200, 150, 100), 3)
+        # Draw axes (simple lines without borders)
+        cv2.line(input_frame, origin, x_end, (200, 150, 100), 3)
         cv2.putText(input_frame, 'x', (x_end[0] + 6, x_end[1] + 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 150, 100), 2)
         
-        cv2.arrowedLine(input_frame, origin, y_end, (200, 180, 220), 3)
+        cv2.line(input_frame, origin, y_end, (200, 180, 220), 3)
         cv2.putText(input_frame, 'y', (y_end[0] + 6, y_end[1] + 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 180, 220), 2)
         
-        cv2.arrowedLine(input_frame, origin, z_end, (150, 220, 200), 3)
+        cv2.line(input_frame, origin, z_end, (150, 220, 200), 3)
         cv2.putText(input_frame, 'z', (z_end[0] + 6, z_end[1] + 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 220, 200), 2)
         
+        
         return input_frame
+    
+    def draw_3axis_vector_predicted(self, input_frame, R_pred, R_imu):
+        """Draw predicted 3-axis vector with dashed lines and lower opacity"""
+        start_x, start_y = self.position
+        axis_length = self.size * 0.75  # Scale axis length relative to STL size
+        
+        # World axes (right-handed)
+        x_axis = np.array([1.0, 0.0, 0.0])
+        y_axis = np.array([0.0, 1.0, 0.0])
+        z_axis = np.array([0.0, 0.0, 1.0])
+        
+        # Rotate axes
+        x_rot = R_pred @ x_axis
+        y_rot = R_pred @ y_axis
+        z_rot = R_pred @ z_axis
+        
+        # Simple axonometric projection
+        alpha = 0.5
+        def proj(v):
+            px = start_x + int((v[0] + alpha * v[1]) * axis_length)
+            py = start_y - int(v[2] * axis_length)
+            return (px, py)
+        
+        origin = (start_x, start_y)
+        x_end = proj(x_rot)
+        y_end = proj(y_rot)
+        z_end = proj(z_rot)
+        
+        # Use same color swatch as IMU axes but with lower opacity (dashed effect)
+        # Create overlay for opacity effect
+        overlay = input_frame.copy()
+        
+        # Draw dashed axes with same colors as IMU but lower opacity
+        self._draw_dashed_line(overlay, origin, x_end, (200, 150, 100), 3)  # Same as IMU x
+        self._draw_dashed_line(overlay, origin, y_end, (200, 180, 220), 3)  # Same as IMU y  
+        self._draw_dashed_line(overlay, origin, z_end, (150, 220, 200), 3)  # Same as IMU z
+        
+        # Blend with lower opacity
+        cv2.addWeighted(overlay, 0.4, input_frame, 0.6, 0, input_frame)
+        
+        return input_frame
+    
+    def _draw_dashed_line(self, img, pt1, pt2, color, thickness):
+        """Draw a dashed line between two points"""
+        # Calculate line parameters
+        x1, y1 = pt1
+        x2, y2 = pt2
+        
+        # Calculate distance and direction
+        dx = x2 - x1
+        dy = y2 - y1
+        distance = int(np.sqrt(dx*dx + dy*dy))
+        
+        if distance == 0:
+            return
+            
+        # Normalize direction
+        dx = dx / distance
+        dy = dy / distance
+        
+        # Draw dashed line
+        dash_length = 8
+        gap_length = 4
+        
+        current_distance = 0
+        while current_distance < distance:
+            # Calculate start and end of current dash
+            start_dist = current_distance
+            end_dist = min(current_distance + dash_length, distance)
+            
+            start_x = int(x1 + start_dist * dx)
+            start_y = int(y1 + start_dist * dy)
+            end_x = int(x1 + end_dist * dx)
+            end_y = int(y1 + end_dist * dy)
+            
+            # Draw the dash segment
+            cv2.line(img, (start_x, start_y), (end_x, end_y), color, thickness)
+            
+            # Move to next dash
+            current_distance += dash_length + gap_length
     
     def draw_stl_model_optimized(self, input_frame, R, fps=None):
         """Draw STL model with pre-computed transformations and LOD"""

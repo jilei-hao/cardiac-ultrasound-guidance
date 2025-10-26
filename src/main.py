@@ -9,6 +9,7 @@ import inference.landmark.landmark_prediction as lp
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
 import inference.inference_helper as ihp
+from inference.rotation.rotation_predictor import create_rotation_predictor
 from common.frame_buffer import FrameBuffer
 from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
@@ -109,6 +110,23 @@ def run_event_loop(options):
   # Initialize the LVEF predictor
   print("Initializing LVEF predictor...")
   lvef_predictor = LVEFPredictor(device)  
+  
+  # Initialize rotation predictor (hardcoded paths)
+  rotation_predictor = None
+  last_predicted_rotation_matrix = None  # Store last prediction
+  try:
+    print("Initializing rotation predictor...")
+    rotation_config_path = "src/inference/rotation/config.json"  # Hardcoded config path
+    rotation_checkpoint_path = "weights/rotation-prediction-251024.pt"  # Hardcoded checkpoint path
+    print(f"🔧 Loading weights from: {rotation_checkpoint_path}")
+    rotation_predictor = create_rotation_predictor(
+      rotation_config_path, 
+      rotation_checkpoint_path, 
+      device
+    )
+  except Exception as e:
+    print(f"⚠️ Rotation predictor not available: {e}")
+    rotation_predictor = None
 
   crnt_classifier_result = (255, 255, 255)
   crnt_classifier_result_pooled = (255, 255, 255)
@@ -181,6 +199,9 @@ def run_event_loop(options):
         crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
       resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
+      
+      # Create 512x512 frame for rotation prediction
+      rotation_frame = cv2.resize(crop_frame, (512, 512), interpolation=cv2.INTER_AREA)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
@@ -191,6 +212,23 @@ def run_event_loop(options):
         print(f"✅ Saved: {filename}")
 
       cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+
+      # ---- Run Rotation Prediction ----
+      if rotation_predictor is not None and frame_count % 10 == 0:  # Run every 10 frames for efficiency
+        new_prediction = rotation_predictor.predict_rotation(rotation_frame)
+        if new_prediction is not None:
+          # TEMPORARY: Exaggerate rotation for testing
+          angle = frame_count * 0.1  # Rotate based on frame count
+          cos_a, sin_a = np.cos(angle), np.sin(angle)
+          exaggeration_matrix = np.array([[cos_a, -sin_a, 0], [sin_a, cos_a, 0], [0, 0, 1]])
+          last_predicted_rotation_matrix = new_prediction @ exaggeration_matrix
+          
+          # Show inverse rotation matrix
+          inverse_rotation_matrix = np.linalg.inv(last_predicted_rotation_matrix)
+          # print(f"🔄 Predicted Inverse Rotation Matrix (Frame {frame_count}):")
+          # print(f"   [{inverse_rotation_matrix[0,0]:.4f}, {inverse_rotation_matrix[0,1]:.4f}, {inverse_rotation_matrix[0,2]:.4f}]")
+          # print(f"   [{inverse_rotation_matrix[1,0]:.4f}, {inverse_rotation_matrix[1,1]:.4f}, {inverse_rotation_matrix[1,2]:.4f}]")
+          # print(f"   [{inverse_rotation_matrix[2,0]:.4f}, {inverse_rotation_matrix[2,1]:.4f}, {inverse_rotation_matrix[2,2]:.4f}]")
 
       # ---- Run Pose Classification ----
       if frame_count % 3 == 0:
@@ -222,12 +260,11 @@ def run_event_loop(options):
       
       # Calculate current FPS for LOD
       current_fps = None
- 
       elapsed_time = time.time() - start_time
       current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
       print(f"Current FPS: {current_fps}")
       
-      vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps)
+      vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps, predicted_rotation_matrix=last_predicted_rotation_matrix)
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       
