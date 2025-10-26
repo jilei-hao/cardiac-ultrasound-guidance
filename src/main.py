@@ -217,18 +217,26 @@ def run_event_loop(options):
       if rotation_predictor is not None and frame_count % 10 == 0:  # Run every 10 frames for efficiency
         new_prediction = rotation_predictor.predict_rotation(rotation_frame)
         if new_prediction is not None:
-          # TEMPORARY: Exaggerate rotation for testing
-          angle = frame_count * 0.1  # Rotate based on frame count
-          cos_a, sin_a = np.cos(angle), np.sin(angle)
-          exaggeration_matrix = np.array([[cos_a, -sin_a, 0], [sin_a, cos_a, 0], [0, 0, 1]])
-          last_predicted_rotation_matrix = new_prediction @ exaggeration_matrix
+          # TEMPORARY: Exaggerate rotation angle by 10x for visibility
+          # Extract rotation angle and multiply by 10
+          from scipy.spatial.transform import Rotation as R
+          r = R.from_matrix(new_prediction)
+          angles = r.as_euler('xyz', degrees=True)  # Get angles in degrees
+          exaggerated_angles = angles * 1.0  # Multiply angles by 10
+          exaggerated_matrix = R.from_euler('xyz', exaggerated_angles, degrees=True).as_matrix()
           
-          # Show inverse rotation matrix
-          inverse_rotation_matrix = np.linalg.inv(last_predicted_rotation_matrix)
-          # print(f"🔄 Predicted Inverse Rotation Matrix (Frame {frame_count}):")
-          # print(f"   [{inverse_rotation_matrix[0,0]:.4f}, {inverse_rotation_matrix[0,1]:.4f}, {inverse_rotation_matrix[0,2]:.4f}]")
-          # print(f"   [{inverse_rotation_matrix[1,0]:.4f}, {inverse_rotation_matrix[1,1]:.4f}, {inverse_rotation_matrix[1,2]:.4f}]")
-          # print(f"   [{inverse_rotation_matrix[2,0]:.4f}, {inverse_rotation_matrix[2,1]:.4f}, {inverse_rotation_matrix[2,2]:.4f}]")
+          # Apply inverse transformation
+          exaggerated_inverse = np.linalg.inv(exaggerated_matrix)
+          
+          # Combine with current IMU rotation (from quaternion)
+          current_imu_rotation = ih.quaternion_to_rotation_matrix(qw, qx, qy, qz)
+          last_predicted_rotation_matrix = current_imu_rotation @ exaggerated_inverse
+          
+          # Show exaggerated inverse rotation matrix
+          # print(f"🔄 Exaggerated Inverse Predicted Rotation Matrix (Frame {frame_count}):")
+          # print(f"   [{last_predicted_rotation_matrix[0,0]:.4f}, {last_predicted_rotation_matrix[0,1]:.4f}, {last_predicted_rotation_matrix[0,2]:.4f}]")
+          # print(f"   [{last_predicted_rotation_matrix[1,0]:.4f}, {last_predicted_rotation_matrix[1,1]:.4f}, {last_predicted_rotation_matrix[1,2]:.4f}]")
+          # print(f"   [{last_predicted_rotation_matrix[2,0]:.4f}, {last_predicted_rotation_matrix[2,1]:.4f}, {last_predicted_rotation_matrix[2,2]:.4f}]")
 
       # ---- Run Pose Classification ----
       if frame_count % 3 == 0:

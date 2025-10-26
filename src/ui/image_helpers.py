@@ -258,8 +258,8 @@ class STLAxisRenderer:
         
         # Draw predicted rotation axes if available (overlay on same position)
         if predicted_rotation_matrix is not None:
-            # Use inverse of predicted rotation matrix
-            R_pred = np.linalg.inv(predicted_rotation_matrix)
+            # Use raw predicted rotation matrix directly (no inverse)
+            R_pred = predicted_rotation_matrix
             input_frame = self.draw_3axis_vector_predicted(input_frame, R_pred, R)
         
         # Draw STL model if vertices are loaded
