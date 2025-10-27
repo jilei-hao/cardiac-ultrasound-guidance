@@ -25,7 +25,7 @@ def run_event_loop(options):
   app_settings = ApplicationSettings() # settings for realtime controls
   
   # STL rendering configuration
-  stl_path = "src/ui/UsProbe_Telemed_L12.stl"
+  stl_path = "src/ui/transducer.stl"
   stl_position = (100, 100)
   stl_size = 80
 

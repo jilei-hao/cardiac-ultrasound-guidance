@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import math
-from .mesh_helper import load_stl_vertices, project_3d_to_2d, draw_stl_simplified
+from .mesh_helper import load_stl_vertices, draw_stl_simplified
 
 def draw_circle_on_image(center, radius, image, bgr):
     cv2.circle(image, center, radius, bgr, -1)
@@ -42,31 +42,28 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """Convert quaternion to 3x3 rotation matrix"""
     norm = math.sqrt(qw*qw + qx*qx + qy*qy + qz*qz)
     if norm == 0:
-        return np.eye(3)
+        return np.eye(3, dtype=float)
     qw, qx, qy, qz = qw/norm, qx/norm, qy/norm, qz/norm
     R = np.array([
         [1 - 2*(qy*qy + qz*qz),     2*(qx*qy - qw*qz),     2*(qx*qz + qw*qy)],
         [    2*(qx*qy + qw*qz), 1 - 2*(qx*qx + qz*qz),     2*(qy*qz - qw*qx)],
         [    2*(qx*qz - qw*qy),     2*(qy*qz + qw*qx), 1 - 2*(qx*qx + qy*qy)]
-    ])
+    ], dtype=float)
     return R
 
-# (Optional legacy helper)
+# Optional legacy helper (kept simple, no extra transforms)
 def draw_3axis_vector(input_frame, qw=1.0, qx=0.0, qy=0.0, qz=0.0):
     start_x, start_y = 100, 100
     axis_length = 60
     R = quaternion_to_rotation_matrix(qw, qx, qy, qz)
 
-    x_axis = np.array([0.0, 1.0, 0.0])
-    y_axis = np.array([1.0, 0.0, 0.0])
+    x_axis = np.array([1.0, 0.0, 0.0])
+    y_axis = np.array([0.0, 1.0, 0.0])
     z_axis = np.array([0.0, 0.0, 1.0])
 
-    # NOTE: This function is unchanged; class below handles the correct frame mapping.
-
-    R_combined = R  # keep as-is (this function not used by class)
-    x_rot = R_combined @ x_axis
-    y_rot = R_combined @ y_axis
-    z_rot = R_combined @ z_axis
+    x_rot = R @ x_axis
+    y_rot = R @ y_axis
+    z_rot = R @ z_axis
 
     alpha = 0.35
     def proj(v):
@@ -97,7 +94,7 @@ def draw_text_on_frame(input_frame, text):
     return input_frame
 
 class STLAxisRenderer:
-    """STL and axis renderer with pre-computed transformations and decimation"""
+    """STL and axis renderer with pre-computed decimation; no coord swaps."""
     def __init__(self, stl_path, position=(100, 100), size=80):
         self.stl_path = stl_path
         self.position = position
@@ -105,9 +102,8 @@ class STLAxisRenderer:
         self.vertices = None
         self.normalized_vertices = None
         self.lod_vertices = {}
-        self.coord_transform = None
         self.load_stl()
-        self.precompute_transformations()
+        self.precompute()
 
     def load_stl(self):
         try:
@@ -117,23 +113,14 @@ class STLAxisRenderer:
             print(f"❌ Failed to load STL: {e}")
             self.vertices = None
 
-    def precompute_transformations(self):
+    def precompute(self):
         if self.vertices is None:
             return
-        # Swap X<->Y to match display coords
-        self.coord_transform = np.array([
-            [0, 1, 0],
-            [1, 0, 0],
-            [0, 0, 1]
-        ], dtype=np.float32)
-        self.combined_transform = self.coord_transform
         self.normalized_vertices = self._normalize_vertices()
         self._precompute_lod_levels()
-        print("✅ Pre-computed all transformations and LOD levels")
+        print("✅ Pre-computed normalization and LOD levels")
 
     def _normalize_vertices(self):
-        if self.vertices is None:
-            return None
         v = self.vertices.copy()
         center = (v.min(axis=0) + v.max(axis=0)) / 2.0
         v = v - center
@@ -145,49 +132,42 @@ class STLAxisRenderer:
     def _precompute_lod_levels(self):
         if self.normalized_vertices is None:
             return
-        lod_levels = [1.0, 0.5, 0.25, 0.1]
-        for lod in lod_levels:
+        for lod in [1.0, 0.5, 0.25, 0.1]:
             if lod == 1.0:
                 self.lod_vertices[lod] = self.normalized_vertices.copy()
             else:
-                num_vertices = int(len(self.normalized_vertices) * lod)
-                if num_vertices > 0:
-                    step = len(self.normalized_vertices) // num_vertices
-                    self.lod_vertices[lod] = self.normalized_vertices[::max(1, step)]
+                num_vertices = max(1, int(len(self.normalized_vertices) * lod))
+                step = max(1, len(self.normalized_vertices) // num_vertices)
+                self.lod_vertices[lod] = self.normalized_vertices[::step]
 
     def get_lod_level(self, fps=None):
         if fps is not None:
             if fps < 5:   return 0.1
-            elif fps < 15: return 0.25
-            elif fps < 20: return 0.5
-            else:          return 1.0
+            if fps < 15:  return 0.25
+            if fps < 20:  return 0.5
+            return 1.0
         return 1.0
 
     def draw_combined(self, input_frame, qw=1.0, qx=0.0, qy=0.0, qz=0.0, fps=None, predicted_rotation_matrix=None):
         R = quaternion_to_rotation_matrix(qw, qx, qy, qz)
         input_frame = self.draw_3axis_vector(input_frame, R)
         if predicted_rotation_matrix is not None:
-            R_pred = predicted_rotation_matrix
-            input_frame = self.draw_3axis_vector_predicted(input_frame, R_pred, R)
+            input_frame = self.draw_3axis_vector_predicted(input_frame, predicted_rotation_matrix)
         if self.vertices is not None:
             input_frame = self.draw_stl_model_optimized(input_frame, R, fps)
         return input_frame
 
     def draw_3axis_vector(self, input_frame, R):
-        """Draw 3-axis vector with given rotation matrix"""
         start_x, start_y = self.position
         axis_length = self.size * 0.75
 
-        # ★ Apply same XY swap as STL so frames match
-        R_display = R @ self.coord_transform  # ★
-
-        x_axis = np.array([0.0, 1.0, 0.0])
-        y_axis = np.array([1.0, 0.0, 0.0])
+        x_axis = np.array([1.0, 0.0, 0.0])
+        y_axis = np.array([0.0, 1.0, 0.0])
         z_axis = np.array([0.0, 0.0, 1.0])
 
-        x_rot = R_display @ x_axis  # ★
-        y_rot = R_display @ y_axis  # ★
-        z_rot = R_display @ z_axis  # ★
+        x_rot = R @ x_axis
+        y_rot = R @ y_axis
+        z_rot = R @ z_axis
 
         alpha = 0.35
         def proj(v):
@@ -199,32 +179,26 @@ class STLAxisRenderer:
         x_end = proj(x_rot); y_end = proj(y_rot); z_end = proj(z_rot)
 
         cv2.line(input_frame, origin, x_end, (200, 150, 100), 3)
-        cv2.putText(input_frame, 'x', (x_end[0] + 6, x_end[1] + 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 150, 100), 2)
+        cv2.putText(input_frame, 'x', (x_end[0] + 6, x_end[1] + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 150, 100), 2)
         cv2.line(input_frame, origin, y_end, (200, 180, 220), 3)
-        cv2.putText(input_frame, 'y', (y_end[0] + 6, y_end[1] + 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 180, 220), 2)
+        cv2.putText(input_frame, 'y', (y_end[0] + 6, y_end[1] + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 180, 220), 2)
         cv2.line(input_frame, origin, z_end, (150, 220, 200), 3)
-        cv2.putText(input_frame, 'z', (z_end[0] + 6, z_end[1] + 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 220, 200), 2)
+        cv2.putText(input_frame, 'z', (z_end[0] + 6, z_end[1] + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 220, 200), 2)
         return input_frame
 
-    def draw_3axis_vector_predicted(self, input_frame, R_pred, R_imu):
+    def draw_3axis_vector_predicted(self, input_frame, R_pred):
         start_x, start_y = self.position
         axis_length = self.size * 0.75
 
-        # ★ Keep predicted axes in same display frame
-        R_pred_display = R_pred @ self.coord_transform  # ★
-
-        y_axis = np.array([0.0, 1.0, 0.0])
         x_axis = np.array([1.0, 0.0, 0.0])
+        y_axis = np.array([0.0, 1.0, 0.0])
         z_axis = np.array([0.0, 0.0, 1.0])
 
-        x_rot = R_pred_display @ x_axis  # ★
-        y_rot = R_pred_display @ y_axis  # ★
-        z_rot = R_pred_display @ z_axis  # ★
+        x_rot = R_pred @ x_axis
+        y_rot = R_pred @ y_axis
+        z_rot = R_pred @ z_axis
 
-        alpha = 0.7
+        alpha = 0.5
         def proj(v):
             px = start_x + int((v[0] + alpha * v[1]) * axis_length)
             py = start_y - int(v[2] * axis_length)
@@ -246,24 +220,26 @@ class STLAxisRenderer:
         distance = int(np.sqrt(dx*dx + dy*dy))
         if distance == 0:
             return
-        dx = dx / distance; dy = dy / distance
-        dash_length = 8; gap_length = 4
-        current_distance = 0
-        while current_distance < distance:
-            start_dist = current_distance
-            end_dist = min(current_distance + dash_length, distance)
-            start_x = int(x1 + start_dist * dx); start_y = int(y1 + start_dist * dy)
-            end_x = int(x1 + end_dist * dx);     end_y = int(y1 + end_dist * dy)
-            cv2.line(img, (start_x, start_y), (end_x, end_y), color, thickness)
-            current_distance += dash_length + gap_length
+        dx /= distance; dy /= distance
+        dash_length, gap_length = 8, 4
+        current = 0
+        while current < distance:
+            start = current
+            end = min(current + dash_length, distance)
+            sx = int(x1 + start * dx); sy = int(y1 + start * dy)
+            ex = int(x1 + end   * dx); ey = int(y1 + end   * dy)
+            cv2.line(img, (sx, sy), (ex, ey), color, thickness)
+            current += dash_length + gap_length
 
     def draw_stl_model_optimized(self, input_frame, R, fps=None):
         if self.normalized_vertices is None:
             return input_frame
-        lod_level = self.get_lod_level(fps=fps)
-        vertices = self.lod_vertices.get(lod_level, self.normalized_vertices)
-        v = vertices @ self.combined_transform.T   # swap XY
-        v = v @ R.T                                # then rotate
+        lod = self.get_lod_level(fps=fps)
+        vertices = self.lod_vertices.get(lod, self.normalized_vertices)
+
+        # No coord transform—just rotate the (normalized) model and project.
+        v = vertices @ R.T
+
         projected = self._project_vertices_optimized(v)
         self._draw_triangles_optimized(input_frame, projected)
         return input_frame
