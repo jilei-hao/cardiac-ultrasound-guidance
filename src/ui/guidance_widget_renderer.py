@@ -45,6 +45,7 @@ class GuidanceWidgetRenderer:
         
         self.vertices = None
         self.normalized_vertices = None
+        self.lod_vertices = None
         self.load_probe()
         self.precompute()
 
@@ -58,11 +59,13 @@ class GuidanceWidgetRenderer:
             self.vertices = None
 
     def precompute(self):
-        """Pre-compute normalized vertices"""
+        """Pre-compute normalized and LOD vertices"""
         if self.vertices is None:
             return
         self.normalized_vertices = self._normalize_vertices()
-        print("Pre-computed normalization")
+        # Apply LOD once during loading
+        self.lod_vertices = self._apply_lod(self.normalized_vertices, self.lod_level)
+        print(f"Pre-computed normalization and LOD ({len(self.lod_vertices)} vertices)")
 
     def _normalize_vertices(self):
         """Normalize vertices to unit cube"""
@@ -267,14 +270,12 @@ class GuidanceWidgetRenderer:
 
     def _draw_probe_model_with_params(self, input_frame, R, position, size):
         """Draw probe model with parameters"""
-        if self.normalized_vertices is None:
+        if self.lod_vertices is None:
             return input_frame
         
-        # Apply LOD
-        vertices = self._apply_lod(self.normalized_vertices, self.lod_level)
-
+        # 
         # Apply rotation
-        v = vertices @ R.T
+        v = self.lod_vertices @ R.T
 
         # Project and draw
         projected = self._project_vertices_with_params(v, position, size)

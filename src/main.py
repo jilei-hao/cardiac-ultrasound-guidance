@@ -147,7 +147,7 @@ def run_event_loop(options):
     lod_level=0.25,  # Level of detail
     probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
     rotation_amplification=5.0,  # Amplification factor for rotation prediction
-    render_mode='overlay',  #
+    render_mode='fullscreen',  #
     window_size=(256, 256)  # 
   )
   
@@ -263,7 +263,7 @@ def run_event_loop(options):
       vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
       
    
-      vis_frame = probe_renderer.render_widget(vis_frame, qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
+      widget_display = probe_renderer.render_widget(np.zeros_like(vis_frame), qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
      
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
@@ -298,7 +298,7 @@ def run_event_loop(options):
         app_settings.frame_dimensions = (frame_width, frame_width)
 
    
-        display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
+        display_frame = cv2.resize(widget_display, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
         # Convert the frame to RGB format
         img = Image.fromarray(display_frame)
