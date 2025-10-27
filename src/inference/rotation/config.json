@@ -1,0 +1,9 @@
+{
+  "model": {
+    "hub_entry": "dinov3_convnext_base",
+    "head_dropout": 0.0
+  },
+  "dataset": {
+    "img_size": 512
+  }
+}

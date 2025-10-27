@@ -8,7 +8,9 @@ import threading
 import inference.landmark.landmark_prediction as lp
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
+from ui.guidance_widget_renderer import GuidanceWidgetRenderer
 import inference.inference_helper as ihp
+from inference.rotation.rotation_predictor import create_rotation_predictor
 from common.frame_buffer import FrameBuffer
 from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
@@ -24,9 +26,7 @@ def run_event_loop(options):
   app_settings = ApplicationSettings() # settings for realtime controls
   
   # STL rendering configuration
-  stl_path = "src/ui/UsProbe_Telemed_L12.stl"
-  stl_position = (100, 100)
-  stl_size = 80
+  probe_mesh_path = "src/ui/transducer.stl"
 
   # Check source and initialize 
   if options.source == 'clarius':
@@ -109,6 +109,23 @@ def run_event_loop(options):
   # Initialize the LVEF predictor
   print("Initializing LVEF predictor...")
   lvef_predictor = LVEFPredictor(device)  
+  
+  # Initialize rotation predictor (hardcoded paths)
+  rotation_predictor = None
+  last_predicted_rotation_matrix = None  # Store last prediction
+  try:
+    print("Initializing rotation predictor...")
+    rotation_config_path = "src/inference/rotation/config.json"  # Hardcoded config path
+    rotation_checkpoint_path = "weights/rotation-prediction-251027.pt"  # Hardcoded checkpoint path
+    print(f"🔧 Loading weights from: {rotation_checkpoint_path}")
+    rotation_predictor = create_rotation_predictor(
+      rotation_config_path, 
+      rotation_checkpoint_path, 
+      device
+    )
+  except Exception as e:
+    print(f"⚠️ Rotation predictor not available: {e}")
+    rotation_predictor = None
 
   crnt_classifier_result = (255, 255, 255)
   crnt_classifier_result_pooled = (255, 255, 255)
@@ -117,9 +134,24 @@ def run_event_loop(options):
   print("Initializing frame buffer...")
   frame_buffer = FrameBuffer(buffer_size=100)
   
-  # Initialize STL renderer (loads STL once for efficiency)
-  print("Initializing STL renderer...")
-  stl_renderer = ih.STLAxisRenderer(stl_path, stl_position, stl_size)
+  # Initialize probe renderer (loads probe once for efficiency)
+  print("Initializing probe renderer...")
+
+  probe_renderer = GuidanceWidgetRenderer(
+    probe_path=probe_mesh_path,
+    background_color=(0, 0, 0),  # Black background
+    predicted_axis_opacity=0.6,  # 60% opacity for predicted axes
+    axis_thickness=3,  # 
+    # axis_colors=((255, 100, 100), (100, 255, 100), (100, 100, 255)),  # Bright RGB colors
+    axis_labels=('x', 'y', 'z'),  
+    lod_level=0.25,  # Level of detail
+    probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
+    rotation_amplification=5.0,  # Amplification factor for rotation prediction
+    render_mode='overlay',  #
+    window_size=(256, 256)  # 
+  )
+  
+
 
   # Initialize lvef thread runner
   lvef_thread = None
@@ -181,6 +213,10 @@ def run_event_loop(options):
         crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
       resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
+      
+      # Create256,256 frame for rotation prediction
+      # trained on 256,256 frame, potentially better performance if resized
+      # rotation_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_AREA)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
@@ -191,6 +227,12 @@ def run_event_loop(options):
         print(f"✅ Saved: {filename}")
 
       cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+
+      # ---- Run Rotation Prediction ----
+      if rotation_predictor is not None and frame_count % 1 == 0: 
+        new_prediction = rotation_predictor.predict_rotation(resized_frame)
+        if new_prediction is not None:
+          last_predicted_rotation_matrix = new_prediction
 
       # ---- Run Pose Classification ----
       if frame_count % 3 == 0:
@@ -220,14 +262,9 @@ def run_event_loop(options):
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
       vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
       
-      # Calculate current FPS for LOD
-      current_fps = None
- 
-      elapsed_time = time.time() - start_time
-      current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
-      print(f"Current FPS: {current_fps}")
-      
-      vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps)
+   
+      vis_frame = probe_renderer.render_widget(vis_frame, qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
+     
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       
@@ -260,6 +297,7 @@ def run_event_loop(options):
         frame_width = min(window_width, window_height)
         app_settings.frame_dimensions = (frame_width, frame_width)
 
+   
         display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
         # Convert the frame to RGB format
