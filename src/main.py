@@ -8,6 +8,7 @@ import threading
 import inference.landmark.landmark_prediction as lp
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
+from ui.guidance_widget_renderer import GuidanceWidgetRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
 from common.frame_buffer import FrameBuffer
@@ -25,9 +26,7 @@ def run_event_loop(options):
   app_settings = ApplicationSettings() # settings for realtime controls
   
   # STL rendering configuration
-  stl_path = "src/ui/transducer.stl"
-  stl_position = (80, 80)
-  stl_size = 70
+  probe_mesh_path = "src/ui/transducer.stl"
 
   # Check source and initialize 
   if options.source == 'clarius':
@@ -135,9 +134,22 @@ def run_event_loop(options):
   print("Initializing frame buffer...")
   frame_buffer = FrameBuffer(buffer_size=100)
   
-  # Initialize STL renderer (loads STL once for efficiency)
-  print("Initializing STL renderer...")
-  stl_renderer = ih.STLAxisRenderer(stl_path, stl_position, stl_size)
+  # Initialize probe renderer (loads probe once for efficiency)
+  print("Initializing probe renderer...")
+
+  probe_renderer = GuidanceWidgetRenderer(
+    probe_path=probe_mesh_path,
+    background_color=(0, 0, 0),  # Black background
+    predicted_axis_opacity=0.6,  # 60% opacity for predicted axes
+    axis_thickness=3,  # 
+    # axis_colors=((255, 100, 100), (100, 255, 100), (100, 100, 255)),  # Bright RGB colors
+    axis_labels=('x', 'y', 'z'),  
+    lod_level=0.25,  # Level of detail
+    probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
+    rotation_amplification=5.0,  # Amplification factor for rotation prediction
+    render_mode='overlay',  #
+    window_size=(256, 256)  # 
+  )
   
 
 
@@ -203,7 +215,8 @@ def run_event_loop(options):
       resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
       
       # Create256,256 frame for rotation prediction
-      rotation_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_AREA)
+      # trained on 256,256 frame, potentially better performance if resized
+      # rotation_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_AREA)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
@@ -216,29 +229,10 @@ def run_event_loop(options):
       cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
 
       # ---- Run Rotation Prediction ----
-      if rotation_predictor is not None and frame_count % 10 == 0:  # Run every 10 frames for efficiency
-        new_prediction = rotation_predictor.predict_rotation(rotation_frame)
+      if rotation_predictor is not None and frame_count % 1 == 0: 
+        new_prediction = rotation_predictor.predict_rotation(resized_frame)
         if new_prediction is not None:
-          # TEMPORARY: Exaggerate rotation angle by 10x for visibility
-          # Extract rotation angle and multiply by 10
-          from scipy.spatial.transform import Rotation as R
-          r = R.from_matrix(new_prediction)
-          angles = r.as_euler('xyz', degrees=True)  # Get angles in degrees
-          exaggerated_angles = angles * 5.0  #
-          exaggerated_matrix = R.from_euler('xyz', exaggerated_angles, degrees=True).as_matrix()
-          
-          # Apply inverse transformation
-          exaggerated_inverse = np.linalg.inv(exaggerated_matrix)
-          
-          # Combine with current IMU rotation (from quaternion)
-          current_imu_rotation = ih.quaternion_to_rotation_matrix(qw, qx, qy, qz)
-          last_predicted_rotation_matrix = current_imu_rotation @ exaggerated_inverse
-          
-          # Show exaggerated inverse rotation matrix
-          # print(f"🔄 Exaggerated Inverse Predicted Rotation Matrix (Frame {frame_count}):")
-          # print(f"   [{last_predicted_rotation_matrix[0,0]:.4f}, {last_predicted_rotation_matrix[0,1]:.4f}, {last_predicted_rotation_matrix[0,2]:.4f}]")
-          # print(f"   [{last_predicted_rotation_matrix[1,0]:.4f}, {last_predicted_rotation_matrix[1,1]:.4f}, {last_predicted_rotation_matrix[1,2]:.4f}]")
-          # print(f"   [{last_predicted_rotation_matrix[2,0]:.4f}, {last_predicted_rotation_matrix[2,1]:.4f}, {last_predicted_rotation_matrix[2,2]:.4f}]")
+          last_predicted_rotation_matrix = new_prediction
 
       # ---- Run Pose Classification ----
       if frame_count % 3 == 0:
@@ -268,15 +262,8 @@ def run_event_loop(options):
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
       vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
       
-      # Calculate current FPS for LOD
-      current_fps = None
-      elapsed_time = time.time() - start_time
-      current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
-      # print(f"Current FPS: {current_fps}")
-      
-      vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps, predicted_rotation_matrix=last_predicted_rotation_matrix)
-      
-      stl_display_frame = stl_renderer.create_full_window_display(qw, qx, qy, qz, fps=current_fps, predicted_rotation_matrix=last_predicted_rotation_matrix, window_size=(stl_size*3, stl_size*3))
+   
+      vis_frame = probe_renderer.render_widget(vis_frame, qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
      
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
@@ -310,10 +297,7 @@ def run_event_loop(options):
         frame_width = min(window_width, window_height)
         app_settings.frame_dimensions = (frame_width, frame_width)
 
-        # for internal checking of stl only display
-        # display_frame = cv2.resize(stl_display_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
-        
-        # actual visframe display
+   
         display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
         # Convert the frame to RGB format
