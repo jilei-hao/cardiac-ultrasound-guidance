@@ -266,6 +266,24 @@ class STLAxisRenderer:
 
     def draw_stl_model(self, input_frame, R):
         return self.draw_stl_model_optimized(input_frame, R, fps=None)
+    
+    def create_full_window_display(self, qw=1.0, qx=0.0, qy=0.0, qz=0.0, fps=None, predicted_rotation_matrix=None, window_size=(400, 400)):
+        """Create a full window display with just STL and axes"""
+        # black background
+        display_frame = np.zeros((window_size[1], window_size[0], 3), dtype=np.uint8)
+        
+        # Update position to center of the window
+        center_x, center_y = window_size[0] // 2, window_size[1] // 2
+        original_position = self.position
+        self.position = (center_x, center_y)
+        
+
+        display_frame = self.draw_combined(display_frame, qw, qx, qy, qz, fps, predicted_rotation_matrix)
+        
+    
+        self.position = original_position
+        
+        return display_frame
 
 def draw_stl_model(input_frame, stl_path, position=(150, 150), size=80, qw=1.0, qx=0.0, qy=0.0, qz=0.0):
     R = quaternion_to_rotation_matrix(qw, qx, qy, qz)

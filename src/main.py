@@ -26,8 +26,8 @@ def run_event_loop(options):
   
   # STL rendering configuration
   stl_path = "src/ui/transducer.stl"
-  stl_position = (100, 100)
-  stl_size = 80
+  stl_position = (80, 80)
+  stl_size = 70
 
   # Check source and initialize 
   if options.source == 'clarius':
@@ -138,6 +138,8 @@ def run_event_loop(options):
   # Initialize STL renderer (loads STL once for efficiency)
   print("Initializing STL renderer...")
   stl_renderer = ih.STLAxisRenderer(stl_path, stl_position, stl_size)
+  
+
 
   # Initialize lvef thread runner
   lvef_thread = None
@@ -273,6 +275,9 @@ def run_event_loop(options):
       # print(f"Current FPS: {current_fps}")
       
       vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps, predicted_rotation_matrix=last_predicted_rotation_matrix)
+      
+      stl_display_frame = stl_renderer.create_full_window_display(qw, qx, qy, qz, fps=current_fps, predicted_rotation_matrix=last_predicted_rotation_matrix, window_size=(stl_size*3, stl_size*3))
+     
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       
@@ -305,6 +310,10 @@ def run_event_loop(options):
         frame_width = min(window_width, window_height)
         app_settings.frame_dimensions = (frame_width, frame_width)
 
+        # for internal checking of stl only display
+        # display_frame = cv2.resize(stl_display_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
+        
+        # actual visframe display
         display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
         # Convert the frame to RGB format
