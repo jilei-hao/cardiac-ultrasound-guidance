@@ -117,7 +117,7 @@ def run_event_loop(options):
   try:
     print("Initializing rotation predictor...")
     rotation_config_path = "src/inference/rotation/config.json"  # Hardcoded config path
-    rotation_checkpoint_path = "weights/rotation-prediction-251024.pt"  # Hardcoded checkpoint path
+    rotation_checkpoint_path = "weights/rotation-prediction-251027.pt"  # Hardcoded checkpoint path
     print(f"🔧 Loading weights from: {rotation_checkpoint_path}")
     rotation_predictor = create_rotation_predictor(
       rotation_config_path, 
@@ -200,8 +200,8 @@ def run_event_loop(options):
 
       resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
       
-      # Create 512x512 frame for rotation prediction
-      rotation_frame = cv2.resize(crop_frame, (512, 512), interpolation=cv2.INTER_AREA)
+      # Create256,256 frame for rotation prediction
+      rotation_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_AREA)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
@@ -222,7 +222,7 @@ def run_event_loop(options):
           from scipy.spatial.transform import Rotation as R
           r = R.from_matrix(new_prediction)
           angles = r.as_euler('xyz', degrees=True)  # Get angles in degrees
-          exaggerated_angles = angles * 1.0  # Multiply angles by 10
+          exaggerated_angles = angles * 5.0  #
           exaggerated_matrix = R.from_euler('xyz', exaggerated_angles, degrees=True).as_matrix()
           
           # Apply inverse transformation
@@ -270,7 +270,7 @@ def run_event_loop(options):
       current_fps = None
       elapsed_time = time.time() - start_time
       current_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
-      print(f"Current FPS: {current_fps}")
+      # print(f"Current FPS: {current_fps}")
       
       vis_frame = stl_renderer.draw_combined(vis_frame, qw, qx, qy, qz, fps=current_fps, predicted_rotation_matrix=last_predicted_rotation_matrix)
       if app_settings.show_border:
