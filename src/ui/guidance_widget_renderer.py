@@ -45,6 +45,15 @@ class GuidanceWidgetRenderer:
         
         self.vertices = None
         self.normalized_vertices = None
+        self.lod_vertices = None
+        
+        # Pre-compute axis vectors (optimization 1)
+        self.base_axes = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+        
+        # Pre-compute projection constants (optimization 2)
+        self.projection_alpha = 0.35
+        self.projection_scale = np.array([1.0, self.projection_alpha, -1.0], dtype=np.float32)  # [x, y, z] scaling
+        
         self.load_probe()
         self.precompute()
 
@@ -58,11 +67,13 @@ class GuidanceWidgetRenderer:
             self.vertices = None
 
     def precompute(self):
-        """Pre-compute normalized vertices"""
+        """Pre-compute normalized and LOD vertices"""
         if self.vertices is None:
             return
         self.normalized_vertices = self._normalize_vertices()
-        print("Pre-computed normalization")
+        # Apply LOD once during loading
+        self.lod_vertices = self._apply_lod(self.normalized_vertices, self.lod_level)
+        print(f"Pre-computed normalization and LOD ({len(self.lod_vertices)} vertices)")
 
     def _normalize_vertices(self):
         """Normalize vertices to unit cube"""
@@ -164,20 +175,16 @@ class GuidanceWidgetRenderer:
         start_x, start_y = position
         axis_length = size * 0.75
 
-        # Define axis vectors
-        x_axis = np.array([1.0, 0.0, 0.0])
-        y_axis = np.array([0.0, 1.0, 0.0])
-        z_axis = np.array([0.0, 0.0, 1.0])
+        # Use pre-computed axis vectors (optimization 1)
+        # Apply rotation to all axes at once
+        rotated_axes = R @ self.base_axes.T  # Shape: (3, 3)
+        x_rot = rotated_axes[:, 0]
+        y_rot = rotated_axes[:, 1] 
+        z_rot = rotated_axes[:, 2]
 
-        # Apply rotation
-        x_rot = R @ x_axis
-        y_rot = R @ y_axis
-        z_rot = R @ z_axis
-
-        # Project to 2D
-        alpha = 0.35
+        # Project to 2D using pre-computed constants (optimization 2)
         def proj(v):
-            px = start_x + int((v[0] + alpha * v[1]) * axis_length)
+            px = start_x + int((v[0] + self.projection_alpha * v[1]) * axis_length)
             py = start_y - int(v[2] * axis_length)
             return (px, py)
 
@@ -206,20 +213,16 @@ class GuidanceWidgetRenderer:
         start_x, start_y = position
         axis_length = size * 0.75
 
-        # Define axis vectors
-        x_axis = np.array([1.0, 0.0, 0.0])
-        y_axis = np.array([0.0, 1.0, 0.0])
-        z_axis = np.array([0.0, 0.0, 1.0])
+        # Use pre-computed axis vectors (optimization 1)
+        # Apply rotation to all axes at once
+        rotated_axes = R_pred @ self.base_axes.T  # Shape: (3, 3)
+        x_rot = rotated_axes[:, 0]
+        y_rot = rotated_axes[:, 1] 
+        z_rot = rotated_axes[:, 2]
 
-        # Apply rotation
-        x_rot = R_pred @ x_axis
-        y_rot = R_pred @ y_axis
-        z_rot = R_pred @ z_axis
-
-        # Project to 2D
-        alpha = 0.35
+        # Project to 2D using pre-computed constants (optimization 2)
         def proj(v):
-            px = start_x + int((v[0] + alpha * v[1]) * axis_length)
+            px = start_x + int((v[0] + self.projection_alpha * v[1]) * axis_length)
             py = start_y - int(v[2] * axis_length)
             return (px, py)
 
@@ -267,14 +270,12 @@ class GuidanceWidgetRenderer:
 
     def _draw_probe_model_with_params(self, input_frame, R, position, size):
         """Draw probe model with parameters"""
-        if self.normalized_vertices is None:
+        if self.lod_vertices is None:
             return input_frame
         
-        # Apply LOD
-        vertices = self._apply_lod(self.normalized_vertices, self.lod_level)
-
+        # 
         # Apply rotation
-        v = vertices @ R.T
+        v = self.lod_vertices @ R.T
 
         # Project and draw
         projected = self._project_vertices_with_params(v, position, size)
@@ -286,9 +287,12 @@ class GuidanceWidgetRenderer:
         if len(vertices) == 0:
             return np.empty((0, 2), dtype=np.int32)
             
-        alpha = 0.35
-        px = vertices[:, 0] + alpha * vertices[:, 1]
-        py = -vertices[:, 2]
+        # Use pre-computed projection constants (optimization 2)
+        # Vectorized projection: [x + alpha*y, -z]
+        projected_xy = vertices[:, :2] * self.projection_scale[:2]  # [x, alpha*y]
+        px = projected_xy[:, 0] + projected_xy[:, 1]  # x + alpha*y
+        py = -vertices[:, 2]  # -z
+        
         v2d = np.stack([px, py], axis=1) * float(size) * self.probe_scale
         v2d = v2d + np.asarray(position, dtype=np.float32)
         v2d = np.clip(v2d, 0, 10000)
