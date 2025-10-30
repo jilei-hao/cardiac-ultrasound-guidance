@@ -317,7 +317,7 @@ def run_event_loop(options):
         app_settings.frame_dimensions = (frame_width, frame_width)
 
    
-        display_frame = cv2.resize(widget_display, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
+        display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
         # Convert the frame to RGB format
         img = Image.fromarray(display_frame)
