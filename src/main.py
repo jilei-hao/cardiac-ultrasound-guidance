@@ -45,6 +45,25 @@ def run_event_loop(options):
   root = tk.Tk()
   root.title("Results")
 
+  if options.guidance_window:
+    # render guidance widget in an additional window
+    root_guidance = tk.Toplevel(root)
+    root_guidance.title("Guidance")
+    # Set the size and position of the "Guidance" window
+    # to be on the right of the Result Window
+    guidance_width = app_settings.input_window_bbox['width']
+    guidance_height = app_settings.input_window_bbox['height'] - 28 # Adjust height to fit the title bar
+    guidance_left = app_settings.input_window_bbox['left'] + app_settings.input_window_bbox['width'] * 2  # Place it to the right of the "Result" window
+    guidance_top = app_settings.input_window_bbox['top']
+    root_guidance.geometry(f"{guidance_width}x{guidance_height}+{guidance_left}+{guidance_top}")
+    # Set background color to black
+    root_guidance.configure(bg='black')
+    # Create a label to show the image with a black background
+    label_guidance = tk.Label(root_guidance, bg='black')
+    label_guidance.pack(expand=True, fill='both')
+
+
+
   # Set the size and position of the "Result" window
   result_width = app_settings.input_window_bbox['width']
   result_height = app_settings.input_window_bbox['height'] - 28  # Adjust height to fit the title bar
@@ -298,7 +317,7 @@ def run_event_loop(options):
         app_settings.frame_dimensions = (frame_width, frame_width)
 
    
-        display_frame = cv2.resize(widget_display, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
+        display_frame = cv2.resize(vis_frame, app_settings.frame_dimensions, interpolation=cv2.INTER_AREA)
 
         # Convert the frame to RGB format
         img = Image.fromarray(display_frame)
@@ -311,6 +330,25 @@ def run_event_loop(options):
         # Update the window to show the new image
         root.update_idletasks()
         root.update()
+
+        if options.guidance_window:
+          # get the curent geometry of the guidance window
+          guidance_geometry = root_guidance.geometry()
+          guidance_width = int(guidance_geometry.split('x')[0])
+          guidance_height = int(guidance_geometry.split('x')[1].split('+')[0])
+
+          # get the minimum width and height of the guidance window
+          frame_width = min(guidance_width, guidance_height)
+          app_settings.guidance_frame_dimensions = (frame_width, frame_width)
+
+          # similarly update the guidance window
+          guidance_frame = cv2.resize(widget_display, app_settings.guidance_frame_dimensions, interpolation=cv2.INTER_AREA)
+          img_guidance = Image.fromarray(guidance_frame)
+          img_tk_guidance = ImageTk.PhotoImage(img_guidance)
+          label_guidance.config(image=img_tk_guidance)
+          label_guidance.image = img_tk_guidance
+          root_guidance.update_idletasks()
+          root_guidance.update()
       except tk.TclError:
         print("🛑 Tkinter window has been destroyed. Exiting capture loop.")
         break
@@ -353,6 +391,7 @@ def main():
   parser.add_argument('--source', type=str, default='screen', help='Source of the frames (screen | clarius).')
   parser.add_argument('--clarius_ip', type=str, default='192.168.1.1', help='IP address of the Clarius probe.')
   parser.add_argument('--clarius_port', type=int, default=5828, help='Port of the Clarius probe.')
+  parser.add_argument('--guidance_window', action='store_true', help='Enable guidance widget rendering window.')
   parser.add_argument('--save', action='store_true', help='Save frames as images.')
   parser.add_argument('--save_folder', type=str, default="output", help='Folder to save images.')
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
