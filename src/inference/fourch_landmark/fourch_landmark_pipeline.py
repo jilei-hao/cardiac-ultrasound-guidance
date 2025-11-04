@@ -211,7 +211,7 @@ class FourChamberLandmarkPipeline:
             frame_size: Frame size (H, W)
             
         Returns:
-            Tensor of shape (num_landmarks, 3) with [x, y, ere] format
+            Tensor of shape (num_landmarks, 4) with [x, y, ere, label] format
         """
         # Group landmarks by label
         landmarks_by_label = {}
@@ -221,22 +221,23 @@ class FourChamberLandmarkPipeline:
                 landmarks_by_label[label] = []
             landmarks_by_label[label].append(lm)
         
-        # Convert to tensor format (x, y, ere)
+        # Convert to tensor format (x, y, ere, label)
         # Use uncertainty as a proxy for ERE (lower uncertainty = lower ERE)
+        # Include label as 4th element for color coding by chamber
         tensor_landmarks = []
         
         for label in self.labels:
             if label in landmarks_by_label:
                 label_landmarks = landmarks_by_label[label]
                 for lm in label_landmarks:
-                    # Use raw uncertainty value (0-1 range)
-                    tensor_landmarks.append([lm['x'], lm['y'], lm['uncertainty']])
+                    # Use raw uncertainty value (0-1 range), include label for color coding
+                    tensor_landmarks.append([lm['x'], lm['y'], lm['uncertainty'], float(label)])
             else:
                 # Fill with dummy values if no landmarks for this label
                 # Use 24 for LV (label 50), 12 for others
                 n_dummy = 24 if label == 50 else self.n_landmarks
                 for _ in range(n_dummy):
-                    tensor_landmarks.append([0, 0, 1.0])  # High uncertainty for missing landmarks
+                    tensor_landmarks.append([0, 0, 1.0, float(label)])  # High uncertainty for missing landmarks
         
         return torch.tensor(tensor_landmarks, dtype=torch.float32)
     
@@ -279,7 +280,7 @@ class FourChamberLandmarkPipeline:
         Returns:
             Tuple of (classification_color, landmarks_tensor)
             - classification_color: RGB tuple for visualization
-            - landmarks_tensor: Tensor of shape (num_landmarks, 3) with [x, y, ere]
+            - landmarks_tensor: Tensor of shape (num_landmarks, 4) with [x, y, ere, label]
         """
         original_size = frame.shape[:2]
         

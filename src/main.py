@@ -235,25 +235,25 @@ def run_event_loop(options):
       else:
         crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
-      resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
-      
-      # Create256,256 frame for rotation prediction
-      # trained on 256,256 frame, potentially better performance if resized
-      # rotation_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_AREA)
+      # All pipelines handle their own resizing internally:
+      # - 4-chamber landmark: 512x512 (handled in pipeline)
+      # - Rotation predictor: 256x256 (handled in pipeline)
+      # - Pose classifier: 256x256 (handled in pipeline)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
       if options.save:
         crnt_timestamp = int(time.time() * 1000)
         filename = os.path.join(options.save_folder, f"{crnt_timestamp}.png")
-        cv2.imwrite(filename, resized_frame)
+        cv2.imwrite(filename, crop_frame)
         print(f"✅ Saved: {filename}")
 
-      cla, landmarks_tensor = run_fourch_core_prediction(landmark_pipeline, resized_frame)
+      # Run 4-chamber landmark prediction on crop_frame (pipeline handles 512x512 resize internally)
+      cla, landmarks_tensor = run_fourch_core_prediction(landmark_pipeline, crop_frame)
 
       # ---- Run Rotation Prediction ----
       if rotation_predictor is not None and frame_count % 1 == 0: 
-        new_prediction = rotation_predictor.predict_rotation(resized_frame)
+        new_prediction = rotation_predictor.predict_rotation(crop_frame)
         if new_prediction is not None:
           last_predicted_rotation_matrix = new_prediction
 
@@ -262,7 +262,7 @@ def run_event_loop(options):
         if app_settings.use_threshold_for_pose_classification:
           crnt_classifier_result = cla
         else:
-          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess)
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess)
           
       # push the classifier result to the queue
       classifier_queue.put(crnt_classifier_result)
@@ -283,7 +283,8 @@ def run_event_loop(options):
         
 
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-      vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
+      # Landmarks are already in crop_frame coordinates, so no scaling needed (pass None)
+      vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6, reference_size=None)
       
    
       widget_display = probe_renderer.render_widget(np.zeros_like(vis_frame), qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
@@ -291,10 +292,10 @@ def run_event_loop(options):
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       
-      # stack resized frames as RGB 
-      resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
-      # add resized frame to the buffer
-      frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result_pooled)
+      # Convert crop_frame to RGB for frame buffer
+      crop_frame_rgb = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2RGB)
+      # add frame to the buffer (pipeline will handle resizing if needed)
+      frame_buffer.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
       # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
@@ -363,7 +364,7 @@ def run_event_loop(options):
         # immediately turn off the flag to avoid senting multiple frames
         app_settings.run_image_upload = False
         try:
-          _, encoded_img = cv2.imencode('.png', resized_frame)
+          _, encoded_img = cv2.imencode('.png', crop_frame)
           response = requests.post(options.upload_url, files={
             "file": ("frame.png", encoded_img.tobytes(), "image/png")
           })
