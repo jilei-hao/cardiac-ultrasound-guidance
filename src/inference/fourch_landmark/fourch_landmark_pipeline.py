@@ -40,13 +40,13 @@ class FourChamberLandmarkPipeline:
     3. Returns landmarks in the same format as the original landmark prediction
     """
     
-    def __init__(self, model_path: str, device: str = "auto", img_size: int = 512, 
+    def __init__(self, weight_path: str, device: str = "auto", img_size: int = 512, 
                  landmarks_per_chamber: Optional[Dict[int, int]] = None):
         """
         Initialize the pipeline.
         
         Args:
-            model_path: Path to the 4ch-seg model weights (.pt file)
+            weight_path: Path to the 4ch-seg model weights (.pt file)
             device: Device to run on ("auto", "cuda", "cpu", "mps")
             img_size: Input image size for segmentation model
             landmarks_per_chamber: Dictionary mapping chamber label to number of landmarks.
@@ -74,7 +74,7 @@ class FourChamberLandmarkPipeline:
         )
         
         # Load checkpoint
-        ckpt = torch.load(model_path, map_location="cpu")
+        ckpt = torch.load(weight_path, map_location="cpu")
         state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         try:
             self.model.load_state_dict(state, strict=True)
@@ -318,14 +318,14 @@ class FourChamberLandmarkPipeline:
         return classification_color, landmarks_tensor
 
 
-def configure_fourch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021.pt", 
+def configure_fourch_landmark_pipeline(weight_path: str = "weights/4ch-seg-251021.pt", 
                                        device: str = "auto",
                                        landmarks_per_chamber: Optional[Dict[int, int]] = None) -> FourChamberLandmarkPipeline:
     """
     Configure the 4-chamber landmark pipeline.
     
     Args:
-        model_path: Path to the 4ch-seg model weights
+        weight_path: Path to the 4ch-seg model weights
         device: Device to run on
         landmarks_per_chamber: Dictionary mapping chamber label to number of landmarks.
                               Default: {50: 24 (LV), 100: 12, 150: 12, 200: 12}
@@ -333,7 +333,7 @@ def configure_fourch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021
     Returns:
         Configured pipeline instance
     """
-    return FourChamberLandmarkPipeline(model_path, device, landmarks_per_chamber=landmarks_per_chamber)
+    return FourChamberLandmarkPipeline(weight_path, device, landmarks_per_chamber=landmarks_per_chamber)
 
 
 def run_fourch_core_prediction(pipeline: FourChamberLandmarkPipeline, 

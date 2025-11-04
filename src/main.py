@@ -125,6 +125,7 @@ def run_event_loop(options, config):
   # Initialize 4-chamber landmark pipeline
   # Configure number of landmarks per chamber (optional - defaults shown)
   landmark_pipeline = configure_fourch_landmark_pipeline(
+    weight_path=config["fourch_landmark_weight_path"],
     device=device,
     landmarks_per_chamber={
         50: 12,   # Left Ventricle (LV)
@@ -428,7 +429,8 @@ def main():
     "lvef_weight_path": "weights/echonet_r2plus1d_18_60_2_pretrained_best.pt",
     "rotation_config_path": "src/inference/rotation/config.json",
     "rotation_checkpoint_path": "weights/rotation-prediction-251027.pt",
-    "probe_mesh_path": "src/ui/transducer.stl"
+    "probe_mesh_path": "src/ui/transducer.stl",
+    "fourch_landmark_weight_path": "weights/fourch_landmark_prediction.pth"
   }
 
   run_event_loop(options, config)
