@@ -26,13 +26,10 @@ class LVEFPredictor:
         if lvef_model_weight_path is not None:
             print("Loading checkpoint {}".format(lvef_model_weight_path))
             checkpoint = torch.load(lvef_model_weight_path, map_location=device)
-            if device == "cuda":
-                self.model.load_state_dict(checkpoint['state_dict'])
-            else:
-                # Strip "module." from keys for CPU/MPS
-                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['state_dict'].items()}
-                self.model.load_state_dict(new_state_dict)
-                
+            # Strip "module." from keys for CPU/MPS
+            new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['state_dict'].items()}
+            self.model.load_state_dict(new_state_dict)
+            
     def get_mean_and_std(self, video_matrix):
         """
         video_matrix is a 4D array, shaped (N, W, D, 3), 

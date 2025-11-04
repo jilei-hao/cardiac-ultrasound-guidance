@@ -144,8 +144,3 @@ weights/
 research/
 
 # macOS system files
-.DS_Store
-# media files
-src/inference/4ch-landmark/test.mp4
-src/inference/landmark/test.mp4
-*.mp4

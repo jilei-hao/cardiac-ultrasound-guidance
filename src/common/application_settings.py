@@ -23,8 +23,10 @@ class ApplicationSettings:
     self.result_window_dimensions = (512, 512)
     self.input_window_bbox = {"top": 60, "left": 45, "width": 450, "height": 650}
     self.frame_dimensions = (112, 112)
+    self.guidance_window_dimensions = (512, 512)
+    self.guidance_frame_dimensions = (256, 256)
     self.run_lvef = False
-    self.print_fps = False
+    self.print_fps = True
     self.use_threshold_for_pose_classification = False
     self.landmark_radius = 8
     self.landmark_alpha = 0.8

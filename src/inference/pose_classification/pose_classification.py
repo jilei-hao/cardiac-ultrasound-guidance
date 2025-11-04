@@ -16,7 +16,8 @@ def load_pretrained_model(device, use_landmarks_for_estimation = True):
         # change the first layer to take 2 channel
         model.conv1 = torch.nn.Conv2d(2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         # fine_tuned_weights = torch.load("weights/PostEst_7_resnet18_multiclass_tuned_regression_landmarks_BEST.pth", map_location=device)
-        fine_tuned_weights = torch.load("weights/PostEst_20250513.pth", map_location=device)
+        # fine_tuned_weights = torch.load("weights/PostEst_20250513.pth", map_location=device)
+        fine_tuned_weights = torch.load("weights/PostEst_256x256.pth", map_location=device)
     else:
         print("Taking image only for pose estimation")
         # change the first layer to take 1 channel
@@ -64,6 +65,9 @@ def run_pose_classifier(model, device, input_image, landmarks, transform, use_la
         image = torch.cat((echo_image, landmarks_image), dim=1)
     else:
         image = echo_image
+    
+    # upsapme to 256x256
+    image = F.interpolate(image, size=(256, 256), mode='bilinear', align_corners=False)
         
     # # ------ checking orientation of image passed to classifier ------
     # # Convert grayscale to 3-channel tensor
