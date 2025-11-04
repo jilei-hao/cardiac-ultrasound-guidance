@@ -134,8 +134,8 @@ def run_event_loop(options, config):
         200: 12,  # Right Atrium (RA)
     }
   )
-  landmark_model = None  # Keep for compatibility, but use pipeline instead
-  classifier_model, preprocess = pc.load_pretrained_model(device) 
+  # landmark_model = None  
+  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=config["pose_classifier_weight_path"]) 
   
   # Initialize the LVEF predictor
   print("Initializing LVEF predictor...")
@@ -430,7 +430,7 @@ def main():
     "rotation_config_path": "src/inference/rotation/config.json",
     "rotation_checkpoint_path": "weights/rotation-prediction-251027.pt",
     "probe_mesh_path": "src/ui/transducer.stl",
-    "fourch_landmark_weight_path": "weights/fourch_landmark_prediction.pth"
+    "fourch_landmark_weight_path": "weights/fourch_landmark_prediction.pt"
   }
 
   run_event_loop(options, config)
