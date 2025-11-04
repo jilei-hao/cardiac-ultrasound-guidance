@@ -4,12 +4,15 @@ import numpy as np
 from torchvision.models import resnet18, ResNet18_Weights
 import matplotlib.pyplot as plt
 
-def load_pretrained_model(device, use_landmarks_for_estimation = True):
+def load_pretrained_model(device, use_landmarks_for_estimation = True, weight_path=None):
     # ---- CHANGE THIS VARIABLE FOR IMAGE ONLY OR IMAGE + LANDMARKS ----
     
     model = resnet18()
     num_ftrs = model.fc.in_features
     model.fc = torch.nn.Linear(num_ftrs, 1)  # Adjust output layer
+
+    if weight_path is None:
+        raise ValueError("[pose_classification] weight_path cannot be None")
 
     if use_landmarks_for_estimation:
         print("Taking image + landmarks for pose estimation")
@@ -17,12 +20,12 @@ def load_pretrained_model(device, use_landmarks_for_estimation = True):
         model.conv1 = torch.nn.Conv2d(2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         # fine_tuned_weights = torch.load("weights/PostEst_7_resnet18_multiclass_tuned_regression_landmarks_BEST.pth", map_location=device)
         # fine_tuned_weights = torch.load("weights/PostEst_20250513.pth", map_location=device)
-        fine_tuned_weights = torch.load("weights/PostEst_256x256.pth", map_location=device)
+        fine_tuned_weights = torch.load(weight_path, map_location=device)
     else:
         print("Taking image only for pose estimation")
         # change the first layer to take 1 channel
         model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        fine_tuned_weights = torch.load("weights/PostEst_9_resnet18_multiclass_tuned_regression_ONLYIMAGES_BEST_new.pth", map_location=device)
+        fine_tuned_weights = torch.load(weight_path, map_location=device)
 
     model.load_state_dict(fine_tuned_weights)
     preprocess = ResNet18_Weights.IMAGENET1K_V1.transforms()

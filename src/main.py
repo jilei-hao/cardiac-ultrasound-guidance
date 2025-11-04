@@ -25,11 +25,8 @@ from data_access.screen_capture.screen_capture import ScreenCapture
 # define a queue
 classifier_queue = Queue()
 
-def run_event_loop(options):
+def run_event_loop(options, config):
   app_settings = ApplicationSettings() # settings for realtime controls
-  
-  # STL rendering configuration
-  probe_mesh_path = "src/ui/transducer.stl"
 
   # Check source and initialize 
   if options.source == 'clarius':
@@ -141,15 +138,15 @@ def run_event_loop(options):
   
   # Initialize the LVEF predictor
   print("Initializing LVEF predictor...")
-  lvef_predictor = LVEFPredictor(device)  
+  lvef_predictor = LVEFPredictor(device, config["lvef_weight_path"])  
   
   # Initialize rotation predictor (hardcoded paths)
   rotation_predictor = None
   last_predicted_rotation_matrix = None  # Store last prediction
   try:
     print("Initializing rotation predictor...")
-    rotation_config_path = "src/inference/rotation/config.json"  # Hardcoded config path
-    rotation_checkpoint_path = "weights/rotation-prediction-251027.pt"  # Hardcoded checkpoint path
+    rotation_config_path = config["rotation_config_path"]  # Hardcoded config path
+    rotation_checkpoint_path = config["rotation_checkpoint_path"]  # Hardcoded checkpoint path
     print(f"🔧 Loading weights from: {rotation_checkpoint_path}")
     rotation_predictor = create_rotation_predictor(
       rotation_config_path, 
@@ -181,7 +178,7 @@ def run_event_loop(options):
   print("Initializing probe renderer...")
 
   probe_renderer = GuidanceWidgetRenderer(
-    probe_path=probe_mesh_path,
+    probe_path=config["probe_mesh_path"],
     background_color=(0, 0, 0),  # Black background
     predicted_axis_opacity=0.6,  # 60% opacity for predicted axes
     axis_thickness=3,  # 
@@ -425,7 +422,16 @@ def main():
   parser.add_argument('--upload_url', type=str, default="http://localhost:8000/upload", help='URL to upload the frame to.')
   options = parser.parse_args()
 
-  run_event_loop(options)
+  config = {
+    "landmark_weight_path": "weights/landmark_prediction.pth",
+    "pose_classifier_weight_path": "weights/PostEst_256x256.pth",
+    "lvef_weight_path": "weights/echonet_r2plus1d_18_60_2_pretrained_best.pt",
+    "rotation_config_path": "src/inference/rotation/config.json",
+    "rotation_checkpoint_path": "weights/rotation-prediction-251027.pt",
+    "probe_mesh_path": "src/ui/transducer.stl"
+  }
+
+  run_event_loop(options, config)
 
 
 if __name__ == "__main__":
