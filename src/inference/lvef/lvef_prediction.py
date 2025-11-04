@@ -10,7 +10,7 @@ class LVEFPredictor:
         model (torch.nn.Module): The pre-trained model for LVEF prediction.
         device (torch.device): The device to run the model on (CPU or GPU).
     """
-    def __init__(self, device):
+    def __init__(self, device, weight_path=None):
         self.device = device
         # load model
         lvef_model_name = "r2plus1d_18"
@@ -22,10 +22,11 @@ class LVEFPredictor:
         self.model = self.model.to(device)
         
         # load model weights
-        lvef_model_weight_path = "weights/echonet_r2plus1d_18_60_2_pretrained_best.pt"
-        if lvef_model_weight_path is not None:
-            print("Loading checkpoint {}".format(lvef_model_weight_path))
-            checkpoint = torch.load(lvef_model_weight_path, map_location=device)
+        if weight_path is None:
+            raise ValueError("[lvef_prediction] weight_path cannot be None")
+        else:
+            print("Loading checkpoint {}".format(weight_path))
+            checkpoint = torch.load(weight_path, map_location=device)
             # Strip "module." from keys for CPU/MPS
             new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['state_dict'].items()}
             self.model.load_state_dict(new_state_dict)

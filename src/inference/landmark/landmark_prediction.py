@@ -36,16 +36,14 @@ def compute_ere(prob_map, pred_x, pred_y, threshold=0.03):
     return float(ERE)
 
 
-def configure_torch(device):
+def configure_torch(device, weight_path=None):
 
     model = ResNet34UNet(num_landmarks=47)
-  
-    # model_path = "/Users/jileihao/dev/arpa-h-dev/lumify_streaming/weights/bigger_net_final.pth"
-    model_path = "weights/landmark_prediction.pth"
 
-    
+    if weight_path is None:
+        raise ValueError("[landmark_prediction] weight_path cannot be None")
 
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(weight_path, map_location=device))
     model.to(device)
     model.eval()
 
