@@ -305,8 +305,8 @@ class FourChamberLandmarkPipeline:
         return classification_color, landmarks_tensor
 
 
-def configure_4ch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021.pt", 
-                                   device: str = "auto") -> FourChamberLandmarkPipeline:
+def configure_fourch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021.pt", 
+                                       device: str = "auto") -> FourChamberLandmarkPipeline:
     """
     Configure the 4-chamber landmark pipeline.
     
@@ -320,8 +320,8 @@ def configure_4ch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021.pt
     return FourChamberLandmarkPipeline(model_path, device)
 
 
-def run_4ch_core_prediction(pipeline: FourChamberLandmarkPipeline, 
-                           input_frame: np.ndarray) -> Tuple[Tuple[int, int, int], torch.Tensor]:
+def run_fourch_core_prediction(pipeline: FourChamberLandmarkPipeline, 
+                               input_frame: np.ndarray) -> Tuple[Tuple[int, int, int], torch.Tensor]:
     """
     Run core prediction using the 4-chamber landmark pipeline.
     Compatible with the existing landmark prediction interface.

@@ -6,6 +6,8 @@ from PIL import Image, ImageTk
 import tkinter as tk
 import threading
 import inference.landmark.landmark_prediction as lp
+# Import fourch_landmark pipeline
+from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
 from ui.guidance_widget_renderer import GuidanceWidgetRenderer
@@ -122,7 +124,9 @@ def run_event_loop(options):
   device = ihp.get_device()
   print(f"Using device: {device}")
 
-  landmark_model = lp.configure_torch(device)
+  # Initialize 4-chamber landmark pipeline
+  landmark_pipeline = configure_fourch_landmark_pipeline(device=device)
+  landmark_model = None  # Keep for compatibility, but use pipeline instead
   classifier_model, preprocess = pc.load_pretrained_model(device) 
   
   # Initialize the LVEF predictor
@@ -245,7 +249,7 @@ def run_event_loop(options):
         cv2.imwrite(filename, resized_frame)
         print(f"✅ Saved: {filename}")
 
-      cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+      cla, landmarks_tensor = run_fourch_core_prediction(landmark_pipeline, resized_frame)
 
       # ---- Run Rotation Prediction ----
       if rotation_predictor is not None and frame_count % 1 == 0: 
