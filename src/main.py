@@ -11,6 +11,7 @@ from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
 from ui.guidance_widget_renderer import GuidanceWidgetRenderer
+from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
 from common.frame_buffer import FrameBuffer
@@ -125,7 +126,16 @@ def run_event_loop(options):
   print(f"Using device: {device}")
 
   # Initialize 4-chamber landmark pipeline
-  landmark_pipeline = configure_fourch_landmark_pipeline(device=device)
+  # Configure number of landmarks per chamber (optional - defaults shown)
+  landmark_pipeline = configure_fourch_landmark_pipeline(
+    device=device,
+    landmarks_per_chamber={
+        50: 12,   # Left Ventricle (LV)
+        100: 12,  # Right Ventricle (RV)
+        150: 12,  # Left Atrium (LA)
+        200: 12,  # Right Atrium (RA)
+    }
+  )
   landmark_model = None  # Keep for compatibility, but use pipeline instead
   classifier_model, preprocess = pc.load_pretrained_model(device) 
   
@@ -157,6 +167,16 @@ def run_event_loop(options):
   print("Initializing frame buffer...")
   frame_buffer = FrameBuffer(buffer_size=100)
   
+  # Initialize 4-chamber landmark renderer
+  print("Initializing 4-chamber landmark renderer...")
+  landmark_renderer = FourChamberLandmarkRenderer(
+    landmark_radius=app_settings.landmark_radius,
+    min_opacity=0.6,
+    max_opacity=1.0,
+    uncertainty_threshold=6.0,
+    reference_size=None  # Landmarks are already in crop_frame coordinates
+  )
+
   # Initialize probe renderer (loads probe once for efficiency)
   print("Initializing probe renderer...")
 
@@ -167,7 +187,7 @@ def run_event_loop(options):
     axis_thickness=3,  # 
     # axis_colors=((255, 100, 100), (100, 255, 100), (100, 100, 255)),  # Bright RGB colors
     axis_labels=('x', 'y', 'z'),  
-    lod_level=0.25,  # Level of detail
+    lod_level=0.1,  # Level of detail
     probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
     rotation_amplification=5.0,  # Amplification factor for rotation prediction
     render_mode='fullscreen',  #
@@ -283,8 +303,10 @@ def run_event_loop(options):
         
 
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-      # Landmarks are already in crop_frame coordinates, so no scaling needed (pass None)
-      vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6, reference_size=None)
+      # Landmarks are already in crop_frame coordinates, so no scaling needed
+      # Update renderer with current landmark radius from app_settings
+      landmark_renderer.set_landmark_radius(app_settings.landmark_radius)
+      vis_frame = landmark_renderer.overlay_landmarks(vis_frame, landmarks_tensor, reference_size=None)
       
    
       widget_display = probe_renderer.render_widget(np.zeros_like(vis_frame), qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)

@@ -40,7 +40,8 @@ class FourChamberLandmarkPipeline:
     3. Returns landmarks in the same format as the original landmark prediction
     """
     
-    def __init__(self, model_path: str, device: str = "auto", img_size: int = 512):
+    def __init__(self, model_path: str, device: str = "auto", img_size: int = 512, 
+                 landmarks_per_chamber: Optional[Dict[int, int]] = None):
         """
         Initialize the pipeline.
         
@@ -48,6 +49,8 @@ class FourChamberLandmarkPipeline:
             model_path: Path to the 4ch-seg model weights (.pt file)
             device: Device to run on ("auto", "cuda", "cpu", "mps")
             img_size: Input image size for segmentation model
+            landmarks_per_chamber: Dictionary mapping chamber label to number of landmarks.
+                                 Default: {50: 24 (LV), 100: 12, 150: 12, 200: 12}
         """
         self.img_size = img_size
         
@@ -90,6 +93,15 @@ class FourChamberLandmarkPipeline:
         # Landmark extraction parameters
         self.labels = [50, 100, 150, 200]  # Skip background (0)
         self.n_landmarks = 12
+        if landmarks_per_chamber is not None:
+            self.landmarks_per_chamber = landmarks_per_chamber
+        else:
+            self.landmarks_per_chamber = {
+                50: 24,   # Left Ventricle: 24 landmarks
+                100: 12,  # Right Ventricle: 12 landmarks
+                150: 12,  # Left Atrium: 12 landmarks
+                200: 12,  # Right Atrium: 12 landmarks
+            }
         self.min_area = 50
         
         # Uncertainty parameters
@@ -179,8 +191,8 @@ class FourChamberLandmarkPipeline:
             if contour is None:
                 continue
                 
-            # Sample equally spaced points - use 24 for LV (label 50), 12 for others
-            n_points = 24 if label == 50 else self.n_landmarks
+            # Sample equally spaced points based on landmarks_per_chamber configuration
+            n_points = self.landmarks_per_chamber.get(label, self.n_landmarks)
             pts = sample_equally_spaced_points(contour, n_points)
             if not pts:
                 continue
@@ -234,8 +246,8 @@ class FourChamberLandmarkPipeline:
                     tensor_landmarks.append([lm['x'], lm['y'], lm['uncertainty'], float(label)])
             else:
                 # Fill with dummy values if no landmarks for this label
-                # Use 24 for LV (label 50), 12 for others
-                n_dummy = 24 if label == 50 else self.n_landmarks
+                # Use landmarks_per_chamber configuration
+                n_dummy = self.landmarks_per_chamber.get(label, self.n_landmarks)
                 for _ in range(n_dummy):
                     tensor_landmarks.append([0, 0, 1.0, float(label)])  # High uncertainty for missing landmarks
         
@@ -307,18 +319,21 @@ class FourChamberLandmarkPipeline:
 
 
 def configure_fourch_landmark_pipeline(model_path: str = "weights/4ch-seg-251021.pt", 
-                                       device: str = "auto") -> FourChamberLandmarkPipeline:
+                                       device: str = "auto",
+                                       landmarks_per_chamber: Optional[Dict[int, int]] = None) -> FourChamberLandmarkPipeline:
     """
     Configure the 4-chamber landmark pipeline.
     
     Args:
         model_path: Path to the 4ch-seg model weights
         device: Device to run on
+        landmarks_per_chamber: Dictionary mapping chamber label to number of landmarks.
+                              Default: {50: 24 (LV), 100: 12, 150: 12, 200: 12}
         
     Returns:
         Configured pipeline instance
     """
-    return FourChamberLandmarkPipeline(model_path, device)
+    return FourChamberLandmarkPipeline(model_path, device, landmarks_per_chamber=landmarks_per_chamber)
 
 
 def run_fourch_core_prediction(pipeline: FourChamberLandmarkPipeline, 
