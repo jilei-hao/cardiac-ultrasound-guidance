@@ -85,12 +85,8 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
             
             # Draw lines connecting consecutive landmarks
             for i in range(len(chamber_landmarks)):
-                x1, y1, unc1 = chamber_landmarks[i]
-                x2, y2, unc2 = chamber_landmarks[(i + 1) % len(chamber_landmarks)]  # Connect last to first
-                
-                # Use average opacity for the line
-                avg_uncertainty = (unc1 + unc2) / 2.0
-                line_opacity = float(max(0.6, 1.0 - avg_uncertainty))  # Higher base opacity (0.6-1.0)
+                x1, y1, _ = chamber_landmarks[i]
+                x2, y2, _ = chamber_landmarks[(i + 1) % len(chamber_landmarks)]  # Connect last to first
                 
                 # Draw line on overlay
                 cv2.line(chamber_overlay, (x1, y1), (x2, y2), color, line_thickness, lineType=cv2.LINE_AA)
