@@ -134,13 +134,28 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-
-
-weights/
-
 # dylib files
 *.dylib
 
 research/
 
 # macOS system files
+.DS_Store
+**/.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.AppleDouble
+.LSOverride
+
+
+
+# weights directory
+weights/*
+!weights/.gitkeep
+!weights/*/
+weights/*/*.pth
+weights/*/*.pt
+weights/*/*.bin
