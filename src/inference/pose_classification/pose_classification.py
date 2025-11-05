@@ -52,6 +52,11 @@ def run_pose_classifier(model, device, input_image, landmarks, transform, use_la
     # image = torch.from_numpy(input_image).unsqueeze(0).repeat(3,1,1).float()
     echo_image = torch.from_numpy(input_image).unsqueeze(0).unsqueeze(0).float().to(device)
     
+    # Resize echo image to 112x112 to match landmarks_image size
+    # This handles any input size (crop_frame can be various sizes)
+    if echo_image.shape[-1] != 112 or echo_image.shape[-2] != 112:
+        echo_image = F.interpolate(echo_image, size=(112, 112), mode='bilinear', align_corners=False)
+    
     # normalize
     echo_image = echo_image / torch.max(echo_image)
     
@@ -106,10 +111,38 @@ def num_to_rgb(numerical_prediction, num_classes=3):
 
 def plot_landmarks_as_images(landmarks, image_size=(112, 112), use_less_landmarks=True):
     device = landmarks.device
-    image = torch.zeros(image_size, device=device)
-    if use_less_landmarks:
-        landmarks_ind = [42, 43, 44, 45, 46, 0, 40, 41, 20, 25, 10, 30, 11, 31]
+    
+    # Determine image size based on landmark count
+    # 48 landmarks = 4-chamber pipeline, 47 landmarks = old pipeline (112x112)
+    if len(landmarks) == 48:
+        # 4-chamber landmarks can be in any coordinate space (crop_frame size)
+        # Detect the original coordinate space from landmark coordinates and scale to 112x112
+        landmarks = landmarks.clone()
+        max_coord = max(landmarks[:, 0].max().item(), landmarks[:, 1].max().item())
+        
+        # Scale landmarks to 112x112 if they're in a different coordinate space
+        if max_coord > 112:
+            scale_factor = 112 / max_coord
+            landmarks[:, 0] = landmarks[:, 0] * scale_factor  # Scale X coordinates
+            landmarks[:, 1] = landmarks[:, 1] * scale_factor  # Scale Y coordinates
+        elif max_coord < 112 and max_coord > 0:
+            # Scale up if landmarks are in smaller coordinate space
+            scale_factor = 112 / max_coord
+            landmarks[:, 0] = landmarks[:, 0] * scale_factor
+            landmarks[:, 1] = landmarks[:, 1] * scale_factor
+        
+        image_size = (112, 112)
+        # For 4-chamber landmarks, use a subset of landmarks for pose classification
+        # Select landmarks from each chamber (first 3 landmarks from each chamber)
+        landmarks_ind = [0, 1, 2, 12, 13, 14, 24, 25, 26, 36, 37, 38]  # 12 landmarks total
         landmarks = landmarks[landmarks_ind]
+    else:
+        # Old pipeline landmarks (already in 112x112 space)
+        if use_less_landmarks:
+            landmarks_ind = [42, 43, 44, 45, 46, 0, 40, 41, 20, 25, 10, 30, 11, 31]
+            landmarks = landmarks[landmarks_ind]
+    
+    image = torch.zeros(image_size, device=device)
 
     landmarks_x = landmarks[:, 0]
     landmarks_y = landmarks[:, 1]

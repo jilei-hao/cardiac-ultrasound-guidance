@@ -6,9 +6,12 @@ from PIL import Image, ImageTk
 import tkinter as tk
 import threading
 import inference.landmark.landmark_prediction as lp
+# Import fourch_landmark pipeline
+from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 import inference.pose_classification.pose_classification as pc
 import ui.image_helpers as ih
 from ui.guidance_widget_renderer import GuidanceWidgetRenderer
+from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
 from common.frame_buffer import FrameBuffer
@@ -119,7 +122,19 @@ def run_event_loop(options, config):
   device = ihp.get_device()
   print(f"Using device: {device}")
 
-  landmark_model = lp.configure_torch(device, config["landmark_weight_path"])
+  # Initialize 4-chamber landmark pipeline
+  # Configure number of landmarks per chamber (optional - defaults shown)
+  landmark_pipeline = configure_fourch_landmark_pipeline(
+    weight_path=config["fourch_landmark_weight_path"],
+    device=device,
+    landmarks_per_chamber={
+        50: 12,   # Left Ventricle (LV)
+        100: 12,  # Right Ventricle (RV)
+        150: 12,  # Left Atrium (LA)
+        200: 12,  # Right Atrium (RA)
+    }
+  )
+  # landmark_model = None  
   classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=config["pose_classifier_weight_path"]) 
   
   # Initialize the LVEF predictor
@@ -150,6 +165,16 @@ def run_event_loop(options, config):
   print("Initializing frame buffer...")
   frame_buffer = FrameBuffer(buffer_size=100)
   
+  # Initialize 4-chamber landmark renderer
+  print("Initializing 4-chamber landmark renderer...")
+  landmark_renderer = FourChamberLandmarkRenderer(
+    landmark_radius=app_settings.landmark_radius,
+    min_opacity=0.6,
+    max_opacity=1.0,
+    uncertainty_threshold=6.0,
+    reference_size=None  # Landmarks are already in crop_frame coordinates
+  )
+
   # Initialize probe renderer (loads probe once for efficiency)
   print("Initializing probe renderer...")
 
@@ -160,7 +185,7 @@ def run_event_loop(options, config):
     axis_thickness=3,  # 
     # axis_colors=((255, 100, 100), (100, 255, 100), (100, 100, 255)),  # Bright RGB colors
     axis_labels=('x', 'y', 'z'),  
-    lod_level=0.25,  # Level of detail
+    lod_level=0.1,  # Level of detail
     probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
     rotation_amplification=5.0,  # Amplification factor for rotation prediction
     render_mode='fullscreen',  #
@@ -228,25 +253,25 @@ def run_event_loop(options, config):
       else:
         crop_frame = orig_gray[pad:h-pad, pad:w-pad]
 
-      resized_frame = cv2.resize(crop_frame, (112, 112), interpolation=cv2.INTER_AREA)
-      
-      # Create256,256 frame for rotation prediction
-      # trained on 256,256 frame, potentially better performance if resized
-      # rotation_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_AREA)
+      # All pipelines handle their own resizing internally:
+      # - 4-chamber landmark: 512x512 (handled in pipeline)
+      # - Rotation predictor: 256x256 (handled in pipeline)
+      # - Pose classifier: 256x256 (handled in pipeline)
         
       # ---- Optional: Save frames ----
       # Save the screenshot without prediction to disk
       if options.save:
         crnt_timestamp = int(time.time() * 1000)
         filename = os.path.join(options.save_folder, f"{crnt_timestamp}.png")
-        cv2.imwrite(filename, resized_frame)
+        cv2.imwrite(filename, crop_frame)
         print(f"✅ Saved: {filename}")
 
-      cla, landmarks_tensor = lp.run_core_prediction(landmark_model, device, resized_frame)
+      # Run 4-chamber landmark prediction on crop_frame (pipeline handles 512x512 resize internally)
+      cla, landmarks_tensor = run_fourch_core_prediction(landmark_pipeline, crop_frame)
 
       # ---- Run Rotation Prediction ----
       if rotation_predictor is not None and frame_count % 1 == 0: 
-        new_prediction = rotation_predictor.predict_rotation(resized_frame)
+        new_prediction = rotation_predictor.predict_rotation(crop_frame)
         if new_prediction is not None:
           last_predicted_rotation_matrix = new_prediction
 
@@ -255,7 +280,7 @@ def run_event_loop(options, config):
         if app_settings.use_threshold_for_pose_classification:
           crnt_classifier_result = cla
         else:
-          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, resized_frame, landmarks_tensor, preprocess)
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess)
           
       # push the classifier result to the queue
       classifier_queue.put(crnt_classifier_result)
@@ -276,7 +301,10 @@ def run_event_loop(options, config):
         
 
       vis_frame = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2BGR)
-      vis_frame = ih.overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6)
+      # Landmarks are already in crop_frame coordinates, so no scaling needed
+      # Update renderer with current landmark radius from app_settings
+      landmark_renderer.set_landmark_radius(app_settings.landmark_radius)
+      vis_frame = landmark_renderer.overlay_landmarks(vis_frame, landmarks_tensor, reference_size=None)
       
    
       widget_display = probe_renderer.render_widget(np.zeros_like(vis_frame), qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
@@ -284,10 +312,10 @@ def run_event_loop(options, config):
       if app_settings.show_border:
         vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
       
-      # stack resized frames as RGB 
-      resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_GRAY2RGB)
-      # add resized frame to the buffer
-      frame_buffer.add_frame(resized_frame_rgb, crnt_classifier_result_pooled)
+      # Convert crop_frame to RGB for frame buffer
+      crop_frame_rgb = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2RGB)
+      # add frame to the buffer (pipeline will handle resizing if needed)
+      frame_buffer.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
       # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
@@ -356,7 +384,7 @@ def run_event_loop(options, config):
         # immediately turn off the flag to avoid senting multiple frames
         app_settings.run_image_upload = False
         try:
-          _, encoded_img = cv2.imencode('.png', resized_frame)
+          _, encoded_img = cv2.imencode('.png', crop_frame)
           response = requests.post(options.upload_url, files={
             "file": ("frame.png", encoded_img.tobytes(), "image/png")
           })
@@ -401,7 +429,8 @@ def main():
     "lvef_weight_path": "weights/echonet_r2plus1d_18_60_2_pretrained_best.pt",
     "rotation_config_path": "src/inference/rotation/config.json",
     "rotation_checkpoint_path": "weights/rotation-prediction-251027.pt",
-    "probe_mesh_path": "src/ui/transducer.stl"
+    "probe_mesh_path": "src/ui/transducer.stl",
+    "fourch_landmark_weight_path": "weights/fourch_landmark_prediction.pt"
   }
 
   run_event_loop(options, config)
