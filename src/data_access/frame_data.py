@@ -1,5 +1,7 @@
+from dataclasses import dataclass
+
+@dataclass
 class FrameData:
-  def __init__(self, image, timestamp, imu):
-    self.image = image
-    self.timestamp = timestamp
-    self.imu = imu
+  image: any
+  timestamp: float
+  imu: any

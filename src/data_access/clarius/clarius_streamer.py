@@ -2,6 +2,7 @@ import data_access.clarius.pyclariuscast as pyclariuscast
 from PIL import Image
 import queue
 from data_access.frame_data import FrameData
+from data_access.frame_data_input import FrameDataInput
 
 class ClariusSettings:
   def __init__(self, ip, port, path, width=512, height=512):
@@ -194,6 +195,59 @@ def set_print_debug_info(debug: bool):
     print("-- [Clarius Streamer] Debugging information enabled")
   else:
     print("-- [Clarius Streamer] Debugging information disabled")
+
+
+class ClariusStreamer(FrameDataInput):
+  """
+  Clarius ultrasound probe streamer implementation of FrameDataInput.
+  Wraps the global functions into a class-based interface.
+  """
+  
+  def __init__(self, ip: str, port: int, path: str, width: int = 512, height: int = 512):
+    """
+    Initialize the Clarius streamer.
+    
+    Args:
+        ip: IP address of the Clarius probe
+        port: Port number for connection
+        path: Path for the connection (typically 'research')
+        width: Image width in pixels
+        height: Image height in pixels
+    """
+    self.ip = ip
+    self.port = port
+    self.path = path
+    self.width = width
+    self.height = height
+    self._configured = False
+  
+  def start(self):
+    """Initialize and start the Clarius probe connection."""
+    if not self._configured:
+      configure(self.ip, self.port, self.path, self.width, self.height)
+      self._configured = True
+    start()
+  
+  def stop(self):
+    """Stop the Clarius probe connection."""
+    stop()
+    self._configured = False
+  
+  def get_frame(self) -> FrameData:
+    """
+    Get the most recent frame from the Clarius probe.
+    
+    Returns:
+        FrameData: Frame data with image, timestamp, and IMU data
+    """
+    frame = get_frame()
+    if frame is None:
+      return FrameData(None, None, None)
+    return frame
+  
+  def set_debug_info(self, debug: bool):
+    """Enable or disable debug information printing."""
+    set_print_debug_info(debug)
 
 
 if __name__ == "__main__":
