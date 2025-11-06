@@ -54,7 +54,8 @@ FrameDataSimulator(frames_folder: str, imu_csv_file: str = None)
 - `has_imu_data()`: Check if IMU data is available
 
 ## 4. Testing
-**Location**: `tests/test_simulator.py`
+**Simulator Testing**: `tests/test_simulator.py`
+**Window Testing**: `tests/test_basic_windows.py`
 
 Successfully tested with existing data:
 - **Test Data**: `output/20250614-012501_155563293680/`
