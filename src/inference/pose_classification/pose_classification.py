@@ -178,3 +178,28 @@ def _regression_to_num_classes(regression_val):
         return 0 # yellow
     else:
         return 1 # green
+    
+
+class PoseClassifierResultPooler:
+    def __init__(self, pool_size=15, min_size=1):
+        self.pool_size = pool_size
+        self.min_size = min_size
+        self.results_pool = []
+
+    def add_result(self, rgb_prediction):
+        self.results_pool.append(rgb_prediction)
+        # Maintain sliding window by removing oldest element if over pool_size
+        if len(self.results_pool) > self.pool_size:
+            self.results_pool.pop(0)
+
+    def get_pooled_result(self):
+        if not self.results_pool:
+            return None
+        
+        # Only return pooled result if we have at least min_size elements
+        if len(self.results_pool) <= self.min_size:
+            return self.results_pool[-1]  # Return most recent result
+        
+        # Find the most common result in the pool
+        most_common_result = max(set(self.results_pool), key=self.results_pool.count)
+        return most_common_result

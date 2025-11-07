@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import cv2
 from PIL import Image
 
+
+
 load_dotenv()  # Load environment variables from .env file
 
 # Add the src directory to the Python path
@@ -25,7 +27,10 @@ from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_
 from inference.rotation.rotation_predictor import create_rotation_predictor
 from inference import inference_helper as ihp
 from ui.guidance_widget_renderer import GuidanceWidgetRenderer
-import inference.pose_classification.pose_classification as pose_classification
+from inference.pose_classification import pose_classification
+from inference.pose_classification.pose_classification import PoseClassifierResultPooler
+from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
+import ui.image_helpers as ih
 
 class InferenceRunner:
     def __init__(self):
@@ -50,6 +55,7 @@ class InferenceRunner:
         _model, _preprocess = pose_classification.load_pretrained_model(self.__device, weight_path=os.getenv("POSE_EST_WEIGHTS"))
         self.__pose_classifier_model = _model
         self.__pose_classifier_preprocess = _preprocess
+        self.__pose_classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
 
     def run_inference(self, frame):
         # Run inference on the given frame using the landmark pipeline
@@ -62,6 +68,9 @@ class InferenceRunner:
             landmarks_tensor,
             self.__pose_classifier_preprocess
         )
+        self.__pose_classifier_result_pooler.add_result(pose_classification_prediction)
+        pose_classification_prediction = self.__pose_classifier_result_pooler.get_pooled_result()
+
 
         return cla, landmarks_tensor, rotation_prediction, pose_classification_prediction
 
@@ -129,6 +138,14 @@ def test_guidance_2d(imu_frames_folder):
         render_mode='fullscreen',  #
         window_size=(256, 256)  # 
     )
+
+    landmark_renderer = FourChamberLandmarkRenderer(
+        landmark_radius=8,
+        min_opacity=0.6,
+        max_opacity=1.0,
+        uncertainty_threshold=6.0,
+        reference_size=None  # Landmarks are already in crop_frame coordinates
+    )
     
     try:
         simulator.start()
@@ -169,7 +186,24 @@ def test_guidance_2d(imu_frames_folder):
 
             cla, landmarks_tensor, rotation_prediction, pose_classification_prediction = inference_runner.run_inference(orig_gray)
 
-            # render probe with predicted rotation
+            # ---------------------------------------
+            # render ultrasound window
+            # ---------------------------------------
+            result_frame = cv2.cvtColor(orig_gray, cv2.COLOR_GRAY2RGB)
+            result_frame = landmark_renderer.overlay_landmarks(
+                result_frame,
+                landmarks_tensor,
+                reference_size=None
+            )
+            result_frame = ih.add_rgb_border_to_result(result_frame, pose_classification_prediction)
+
+
+
+
+            # --------------------------------------
+            # render guidance window
+            # --------------------------------------
+
             widget_display = probe_renderer.render_widget(
                 np.zeros_like(orig_gray),
                 qw, qx, qy, qz,
@@ -193,7 +227,7 @@ def test_guidance_2d(imu_frames_folder):
                 guidance_img_2d = cv2.cvtColor(guidance_img_2d, cv2.COLOR_GRAY2RGB)
 
             # ==========================================
-            main_frame = orig_frame.copy()
+            main_frame = result_frame.copy()
             
             guidance_frame = guidance_img_2d.copy()
 

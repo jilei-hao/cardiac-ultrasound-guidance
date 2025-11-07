@@ -9,6 +9,7 @@ import inference.landmark.landmark_prediction as lp
 # Import fourch_landmark pipeline
 from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 import inference.pose_classification.pose_classification as pc
+from inference.pose_classification import pose_classification as pc, PoseClassifierResultPooler
 import ui.image_helpers as ih
 from ui.guidance_widget_renderer import GuidanceWidgetRenderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
@@ -134,9 +135,10 @@ def run_event_loop(options, config):
         200: 12,  # Right Atrium (RA)
     }
   )
-  # landmark_model = None  
-  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=config["pose_classifier_weight_path"]) 
-  
+  # landmark_model = None
+  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=config["pose_classifier_weight_path"])
+  classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
+
   # Initialize the LVEF predictor
   print("Initializing LVEF predictor...")
   lvef_predictor = LVEFPredictor(device, config["lvef_weight_path"])  
