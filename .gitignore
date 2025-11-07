@@ -159,3 +159,7 @@ weights/*
 weights/*/*.pth
 weights/*/*.pt
 weights/*/*.bin
+
+
+# vscode
+.vscode/
