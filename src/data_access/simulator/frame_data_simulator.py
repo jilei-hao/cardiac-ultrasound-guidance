@@ -2,7 +2,7 @@ import os
 import time
 import pandas as pd
 from PIL import Image
-from data_access.frame_data import FrameData
+from data_access.frame_data import FrameData, IMUData
 from data_access.frame_data_input import FrameDataInput
 
 
@@ -21,6 +21,11 @@ class FrameDataSimulator(FrameDataInput):
             imu_csv_file: Path to CSV file containing IMU data (optional)
         """
         self.frames_folder = frames_folder
+        if (imu_csv_file is not None) and (not os.path.exists(imu_csv_file)):
+            raise FileNotFoundError(f"IMU CSV file not found: {imu_csv_file}")
+        if imu_csv_file is None:
+            imu_csv_file = os.path.join(frames_folder, "frame.imu.csv")
+        
         self.imu_csv_file = imu_csv_file
         self.frame_files = []
         self.imu_data = None
@@ -103,6 +108,10 @@ class FrameDataSimulator(FrameDataInput):
             frame_path = self.frame_files[self.current_frame_index]
             image = Image.open(frame_path)
             
+            # Convert to RGB format consistently
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
             # Generate dummy timestamp (nanoseconds since start)
             current_time = time.time_ns()
             timestamp = current_time
@@ -111,7 +120,7 @@ class FrameDataSimulator(FrameDataInput):
             imu_data = None
             if self.imu_data is not None and self.current_frame_index < len(self.imu_data):
                 imu_row = self.imu_data.iloc[self.current_frame_index]
-                imu_data = imu_row.to_dict()  # Convert to dictionary
+                imu_data = IMUData.from_dict(imu_row.to_dict())  # Convert to IMUData instance
             
             # Advance to next frame
             self.current_frame_index += 1

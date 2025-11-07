@@ -56,7 +56,7 @@ def demo_single_window():
     
     # Create simulator
     simulator = FrameDataSimulator(
-        frames_folder="/Users/jileihao/dev/arpa-h-dev/cardiac-ultrasound-guidance/output/20250614-012501_155563293680"
+        frames_folder="/home/jileihao/dev/aph-dev/cardiac-ultrasound-guidance/output/imu_frames_01"
     )
     
     try:

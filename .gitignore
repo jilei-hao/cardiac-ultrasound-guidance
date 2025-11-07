@@ -163,3 +163,6 @@ weights/*/*.bin
 
 # vscode
 .vscode/
+
+# dotenv environment variables file
+.env
