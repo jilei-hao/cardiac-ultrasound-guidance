@@ -424,13 +424,13 @@ def main():
   options = parser.parse_args()
 
   config = {
-    "landmark_weight_path": "weights/landmark_prediction.pth",
-    "pose_classifier_weight_path": "weights/PostEst_256x256.pth",
-    "lvef_weight_path": "weights/echonet_r2plus1d_18_60_2_pretrained_best.pt",
+    "landmark_weight_path": "weights/landmark-prediction_v1.pth",
+    "pose_classifier_weight_path": "weights/post-est-256x256_v1.pth",
+    "lvef_weight_path": "weights/echonet_v1.pt",
     "rotation_config_path": "src/inference/rotation/config.json",
-    "rotation_checkpoint_path": "weights/rotation-prediction-251027.pt",
-    "probe_mesh_path": "src/ui/transducer.stl",
-    "fourch_landmark_weight_path": "weights/fourch_landmark_prediction.pt"
+    "rotation_checkpoint_path": "weights/rotation-prediction_v1.pt",
+    "probe_mesh_path": "assets/transducer.stl",
+    "fourch_landmark_weight_path": "weights/4ch-seg_v1.pt"
   }
 
   run_event_loop(options, config)
