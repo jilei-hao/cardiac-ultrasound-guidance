@@ -9,7 +9,8 @@ import inference.landmark.landmark_prediction as lp
 # Import fourch_landmark pipeline
 from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 import inference.pose_classification.pose_classification as pc
-from inference.pose_classification import pose_classification as pc, PoseClassifierResultPooler
+from inference.pose_classification import pose_classification as pc
+from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 import ui.image_helpers as ih
 from ui.guidance_widget import create_guidance_widget_renderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
