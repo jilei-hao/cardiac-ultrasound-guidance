@@ -113,36 +113,56 @@ class Generic3DRenderer:
             self.renderer = pyrender.OffscreenRenderer(self.width, self.height)
             
             self.is_initialized = True
-            print(f"✅ Generic3DRenderer initialized ({self.width}x{self.height})")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to initialize Generic3DRenderer: {e}")
+            print(f"Failed to initialize Generic3DRenderer: {e}")
             return False
     
     def _setup_default_lighting(self):
-        """Set up default scene lighting."""
-        # Directional light from above
-        light = pyrender.DirectionalLight(color=np.ones(3), intensity=3.0)
-        light_pose = np.array([
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 2.0],
+        """Set up realistic scene lighting for better surface detail visibility."""
+        # Main directional light (like sun) - from upper front left
+        main_light = pyrender.DirectionalLight(
+            color=np.array([1.0, 0.95, 0.9]),  # Slightly warm white
+            intensity=1.5  # Reduced intensity
+        )
+        # Position light from upper front left for good modeling
+        main_light_pose = np.array([
+            [0.7071, -0.5, 0.5, 0.0],
+            [0.7071, 0.5, -0.5, 0.0], 
+            [0.0, 0.7071, 0.7071, 3.0],
             [0.0, 0.0, 0.0, 1.0]
         ])
-        light_node = self.scene.add(light, pose=light_pose)
-        self.light_nodes['default_directional'] = light_node
+        main_light_node = self.scene.add(main_light, pose=main_light_pose)
+        self.light_nodes['main_directional'] = main_light_node
         
-        # Add a point light for better illumination
-        point_light = pyrender.PointLight(color=np.ones(3), intensity=10.0)
-        point_light_pose = np.array([
-            [1.0, 0.0, 0.0, 2.0],
-            [0.0, 1.0, 0.0, 2.0],
-            [0.0, 0.0, 1.0, 2.0],
+        # Fill light - softer light from opposite side to reduce harsh shadows
+        fill_light = pyrender.DirectionalLight(
+            color=np.array([0.8, 0.9, 1.0]),  # Slightly cool white
+            intensity=0.3  # Much softer fill light
+        )
+        fill_light_pose = np.array([
+            [-0.7071, 0.5, -0.5, 0.0],
+            [-0.7071, -0.5, 0.5, 0.0],
+            [0.0, -0.7071, 0.7071, 2.0],
             [0.0, 0.0, 0.0, 1.0]
         ])
-        point_light_node = self.scene.add(point_light, pose=point_light_pose)
-        self.light_nodes['default_point'] = point_light_node
+        fill_light_node = self.scene.add(fill_light, pose=fill_light_pose)
+        self.light_nodes['fill_directional'] = fill_light_node
+        
+        # Key light - point light for highlights and surface detail
+        key_light = pyrender.PointLight(
+            color=np.array([1.0, 1.0, 1.0]), 
+            intensity=2.0  # Much lower intensity
+        )
+        key_light_pose = np.array([
+            [1.0, 0.0, 0.0, 1.5],
+            [0.0, 1.0, 0.0, 2.0],
+            [0.0, 0.0, 1.0, 2.5],
+            [0.0, 0.0, 0.0, 1.0]
+        ])
+        key_light_node = self.scene.add(key_light, pose=key_light_pose)
+        self.light_nodes['key_point'] = key_light_node
     
     def add_node(self, 
                  name: str,
@@ -162,7 +182,7 @@ class Generic3DRenderer:
             pyrender.Node: The created scene node, or None if failed
         """
         if not self.is_initialized:
-            print("❌ Renderer not initialized. Call initialize() first.")
+            print("Renderer not initialized. Call initialize() first.")
             return None
         
         # Remove existing node with same name
@@ -193,12 +213,12 @@ class Generic3DRenderer:
             # Track the node and mesh
             self.nodes[name] = node
             self.meshes[name] = pr_mesh
-            
-            print(f"✅ Added node '{name}' to scene")
+
+            print(f"Added node '{name}' to scene")
             return node
             
         except Exception as e:
-            print(f"❌ Failed to add node '{name}': {e}")
+            print(f"Failed to add node '{name}': {e}")
             return None
     
     def set_pose(self, name: str, pose: np.ndarray) -> bool:
@@ -213,14 +233,14 @@ class Generic3DRenderer:
             bool: True if successful, False otherwise
         """
         if name not in self.nodes:
-            print(f"❌ Node '{name}' not found in scene")
+            print(f"Node '{name}' not found in scene")
             return False
         
         try:
             self.scene.set_pose(self.nodes[name], pose)
             return True
         except Exception as e:
-            print(f"❌ Failed to set pose for '{name}': {e}")
+            print(f"Failed to set pose for '{name}': {e}")
             return False
     
     def get_pose(self, name: str) -> Optional[np.ndarray]:
@@ -234,13 +254,13 @@ class Generic3DRenderer:
             np.ndarray: 4x4 transformation matrix, or None if node not found
         """
         if name not in self.nodes:
-            print(f"❌ Node '{name}' not found in scene")
+            print(f"Node '{name}' not found in scene")
             return None
         
         try:
             return self.scene.get_pose(self.nodes[name])
         except Exception as e:
-            print(f"❌ Failed to get pose for '{name}': {e}")
+            print(f"Failed to get pose for '{name}': {e}")
             return None
     
     def remove_node(self, name: str) -> bool:
@@ -260,10 +280,10 @@ class Generic3DRenderer:
             self.scene.remove_node(self.nodes[name])
             del self.nodes[name]
             del self.meshes[name]
-            print(f"✅ Removed node '{name}' from scene")
+            print(f"Removed node '{name}' from scene")
             return True
         except Exception as e:
-            print(f"❌ Failed to remove node '{name}': {e}")
+            print(f"Failed to remove node '{name}': {e}")
             return False
     
     def set_camera_pose(self, pose: np.ndarray):
@@ -300,7 +320,7 @@ class Generic3DRenderer:
                 - depth_buffer: Depth map (height x width), dtype float32
         """
         if not self.is_initialized or self.renderer is None:
-            print("❌ Renderer not initialized")
+            print("Renderer not initialized")
             return np.zeros((self.height, self.width, 3), dtype=np.uint8), \
                    np.zeros((self.height, self.width), dtype=np.float32)
         
@@ -311,7 +331,7 @@ class Generic3DRenderer:
                 color, depth = self.renderer.render(self.scene, flags=flags)
             return color, depth
         except Exception as e:
-            print(f"❌ Render failed: {e}")
+            print(f"Render failed: {e}")
             return np.zeros((self.height, self.width, 3), dtype=np.uint8), \
                    np.zeros((self.height, self.width), dtype=np.float32)
     
@@ -337,7 +357,7 @@ class Generic3DRenderer:
         node_names = list(self.nodes.keys())
         for name in node_names:
             self.remove_node(name)
-        print("✅ Scene cleared (camera and lights preserved)")
+        print("Scene cleared (camera and lights preserved)")
     
     def load_mesh_from_file(self, 
                            filepath: str,
@@ -355,7 +375,7 @@ class Generic3DRenderer:
             trimesh.Trimesh: Loaded mesh, or None if failed
         """
         if not os.path.exists(filepath):
-            print(f"❌ File not found: {filepath}")
+            print(f"File not found: {filepath}")
             return None
         
         try:
@@ -369,11 +389,11 @@ class Generic3DRenderer:
             if scale != 1.0:
                 mesh.vertices *= scale
             
-            print(f"✅ Loaded mesh from {filepath} ({len(mesh.vertices)} vertices)")
+            print(f"Loaded mesh from {filepath} ({len(mesh.vertices)} vertices)")
             return mesh
             
         except Exception as e:
-            print(f"❌ Failed to load mesh from {filepath}: {e}")
+            print(f"Failed to load mesh from {filepath}: {e}")
             return None
     
     def destroy(self):
@@ -392,10 +412,10 @@ class Generic3DRenderer:
             self.light_nodes.clear()
             
             self.is_initialized = False
-            print("✅ Generic3DRenderer destroyed")
+            print("Generic3DRenderer destroyed")
             
         except Exception as e:
-            print(f"❌ Error during cleanup: {e}")
+            print(f"Error during cleanup: {e}")
     
     def __del__(self):
         """Destructor to ensure cleanup."""

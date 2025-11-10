@@ -11,6 +11,10 @@ pandas
 torch
 torchvision
 
+# Rendering
+pyrender
+trimesh
+
 # Utilities
 requests
 

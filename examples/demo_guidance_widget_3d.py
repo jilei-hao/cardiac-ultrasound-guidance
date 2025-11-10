@@ -44,34 +44,41 @@ def _unregister_keys(window, keys):
 
 def create_coordinate_axes(length: float = 1.0, radius: float = 0.02) -> dict:
     """
-    Create coordinate axes as trimesh objects.
+    Create coordinate axes as trimesh cylinder objects originating from center.
+    X-axis (red) points along probe head direction (positive X)
+    Y-axis (green) points sideways 
+    Z-axis (blue) points up/down
     
     Returns:
         dict: {'x': trimesh, 'y': trimesh, 'z': trimesh}
     """
     axes = {}
     
-    # X-axis (red) - cylinder along X
-    x_cyl = trimesh.creation.cylinder(radius=radius, height=length)
-    rot_z = create_rotation_matrix('z', -np.pi/2)
-    trans_x = create_translation_matrix(length/2, 0, 0)
-    x_cyl.apply_transform(rot_z)
-    x_cyl.apply_transform(trans_x)
-    axes['x'] = x_cyl
+    # X-axis (red) - cylinder extending from origin along +X
+    x_shaft = trimesh.creation.cylinder(radius=radius, height=length)
     
-    # Y-axis (green) - cylinder along Y
-    y_cyl = trimesh.creation.cylinder(radius=radius, height=length)
-    trans_y = create_translation_matrix(0, length/2, 0)
-    y_cyl.apply_transform(trans_y)
-    axes['y'] = y_cyl
+    # Position shaft to extend from origin to +X
+    x_shaft.apply_transform(create_rotation_matrix('y', np.pi/2))
+    x_shaft.apply_transform(create_translation_matrix(length/2, 0, 0))
     
-    # Z-axis (blue) - cylinder along Z
-    z_cyl = trimesh.creation.cylinder(radius=radius, height=length)
-    rot_x = create_rotation_matrix('x', np.pi/2)
-    trans_z = create_translation_matrix(0, 0, length/2)
-    z_cyl.apply_transform(rot_x)
-    z_cyl.apply_transform(trans_z)
-    axes['z'] = z_cyl
+    axes['x'] = x_shaft
+    
+    # Y-axis (green) - cylinder extending from origin along +Y
+    y_shaft = trimesh.creation.cylinder(radius=radius, height=length)
+    
+    # Position shaft to extend from origin to +Y
+    y_shaft.apply_transform(create_rotation_matrix('x', -np.pi/2))
+    y_shaft.apply_transform(create_translation_matrix(0, length/2, 0))
+    
+    axes['y'] = y_shaft
+    
+    # Z-axis (blue) - cylinder extending from origin along +Z
+    z_shaft = trimesh.creation.cylinder(radius=radius, height=length)
+    
+    # Position shaft to extend from origin to +Z (already aligned)
+    z_shaft.apply_transform(create_translation_matrix(0, 0, length/2))
+    
+    axes['z'] = z_shaft
     
     return axes
 
@@ -100,56 +107,86 @@ def simulate_imu_quaternions(num_samples: int = 100):
     return np.array(quaternions)
 
 
-def demo_guidance_widget(data_folder: str = None):
+def demo_guidance_widget(data_folder: str = None, scale_factor: float = 1.0, wireframe: bool = False):
     """
     Demo of a 3D guidance widget similar to guidance_widget_renderer.py
     Shows probe orientation using real or simulated IMU data.
     
     Args:
         data_folder: Path to folder containing frame.imu.csv file. If None, uses simulated data.
+        scale_factor: Scaling factor for probe and axes size (default: 1.0)
+        wireframe: If True, render in wireframe mode (default: False)
     """
     print("\n=== 3D Guidance Widget Demo ===")
 
     renderer = Generic3DRenderer(
         width=640,
         height=480,
-        background_color=(0.1, 0.1, 0.15, 1.0)
+        background_color=(0.1, 0.1, 0.15, 1.0),
+        ambient_light=np.array([0.2, 0.2, 0.2])  # Much lower ambient light for better contrast
     )
     if not renderer.initialize(camera_fov=np.pi / 4):
         print("❌ Failed to initialize renderer")
         renderer.destroy()
         return
 
-    # Load transducer mesh from assets
+    # Load transducer mesh from assets with scaling
     stl_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'transducer.stl')
     if os.path.exists(stl_path):
-        print("Loading transducer STL file...")
-        probe_mesh = renderer.load_mesh_from_file(stl_path, scale=0.01, center=True)
+        print(f"Loading transducer STL file with scale factor {scale_factor}...")
+        probe_mesh = renderer.load_mesh_from_file(stl_path, scale=0.01 * scale_factor, center=True)
         if probe_mesh is None:
             print("Failed to load transducer STL, using capsule instead")
-            probe_mesh = trimesh.creation.capsule(radius=0.2, height=2.0)
+            probe_mesh = trimesh.creation.capsule(radius=0.2 * scale_factor, height=2.0 * scale_factor)
     else:
         print(f"Transducer STL not found at {stl_path}, using capsule mesh")
-        probe_mesh = trimesh.creation.capsule(radius=0.2, height=2.0)
+        probe_mesh = trimesh.creation.capsule(radius=0.2 * scale_factor, height=2.0 * scale_factor)
 
-    renderer.add_node("probe", probe_mesh)
-
-    axes = create_coordinate_axes(length=1.5, radius=0.03)
+    # Create coordinate axes that originate from probe center with scaling
+    # Simple cylinder shafts - X (red) extends along probe head direction
+    axes = create_coordinate_axes(length=1.2 * scale_factor, radius=0.02 * scale_factor)
+    print(f"Created coordinate axes with scale factor {scale_factor} - X (red) extends to probe head, Y (green) sideways, Z (blue) up/down")
 
     import pyrender
 
+    # Create realistic materials with better surface detail visibility
+    # Wireframe is controlled by render flags instead of material properties
     materials = {
-        'x': pyrender.MetallicRoughnessMaterial(baseColorFactor=[1.0, 0.0, 0.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
-        'y': pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.0, 1.0, 0.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
-        'z': pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.0, 0.0, 1.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
+        'probe': pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[0.98, 0.98, 0.98, 1.0],  # White/off-white plastic color
+            metallicFactor=0.1,  # No metallic properties for plastic appearance
+            roughnessFactor=0.7  # Higher roughness for matte plastic finish
+        ),
+        'x': pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[1.0, 0.2, 0.2, 1.0],  # Brighter red for better visibility
+            metallicFactor=0.3, 
+            roughnessFactor=0.6
+        ),
+        'y': pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[0.2, 1.0, 0.2, 1.0],  # Brighter green for better visibility
+            metallicFactor=0.3, 
+            roughnessFactor=0.6
+        ),
+        'z': pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[0.2, 0.2, 1.0, 1.0],  # Brighter blue for better visibility
+            metallicFactor=0.3, 
+            roughnessFactor=0.6
+        ),
     }
+    
+    if wireframe:
+        print("🔲 Using wireframe rendering mode (RenderFlags.ALL_WIREFRAME)")
 
+    # Add probe and axes with appropriate materials
+    renderer.add_node("probe", probe_mesh, material=materials['probe'])
     renderer.add_node("x_axis", pyrender.Mesh.from_trimesh(axes['x'], material=materials['x']))
     renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(axes['y'], material=materials['y']))
     renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(axes['z'], material=materials['z']))
 
+    # Adjust camera distance based on scale factor
+    camera_distance = 5.0 * max(1.0, scale_factor * 0.8)  # Adjust distance but not linearly
     camera_pose = np.eye(4)
-    camera_pose[:3, 3] = [3.0, 2.0, 4.0]
+    camera_pose[:3, 3] = [3.0 * camera_distance/5.0, 2.0 * camera_distance/5.0, camera_distance]
 
     target = np.array([0.0, 0.0, 0.0])
     camera_pos = camera_pose[:3, 3]
@@ -235,6 +272,7 @@ def demo_guidance_widget(data_folder: str = None):
                 print("Paused" if paused else "Resumed")
 
             if not paused:
+                rotation_matrix = None
                 if use_simulator and simulator:
                     # Get frame data from simulator
                     frame_data = simulator.get_frame()
@@ -242,14 +280,29 @@ def demo_guidance_widget(data_folder: str = None):
                         # Extract quaternion from IMU data
                         imu = frame_data.imu
                         qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
-                        renderer.set_pose("probe", quaternion_to_matrix(qw, qx, qy, qz))
+                        rotation_matrix = quaternion_to_matrix(qw, qx, qy, qz)
                 else:
                     # Use simulated quaternions
+                    if frame_idx > 0 and frame_idx % len(quaternions) == 0:
+                        print("🔄 Reached end of simulated sequence, restarting from beginning")
                     qw, qx, qy, qz = quaternions[frame_idx % len(quaternions)]
-                    renderer.set_pose("probe", quaternion_to_matrix(qw, qx, qy, qz))
+                    rotation_matrix = quaternion_to_matrix(qw, qx, qy, qz)
                     frame_idx += 1
+                
+                # Apply the same rotation to both probe and axes
+                if rotation_matrix is not None:
+                    renderer.set_pose("probe", rotation_matrix)
+                    renderer.set_pose("x_axis", rotation_matrix)
+                    renderer.set_pose("y_axis", rotation_matrix)
+                    renderer.set_pose("z_axis", rotation_matrix)
 
-            color, _ = renderer.render()
+            # Render with appropriate flags
+            if wireframe:
+                import pyrender
+                color, _ = renderer.render(flags=pyrender.RenderFlags.ALL_WIREFRAME)
+            else:
+                # Use standard rendering for now (shadows have NumPy compatibility issues)
+                color, _ = renderer.render()
             window.display_frame(color)
 
             time.sleep(0.03)
@@ -267,73 +320,73 @@ def demo_guidance_widget(data_folder: str = None):
 
 def demo_rotation_amplification():
     """Demo showing rotation amplification similar to the original widget."""
-    print("\n=== Rotation Amplification Demo ===")
+    # print("\n=== Rotation Amplification Demo ===")
 
-    renderer = Generic3DRenderer(width=640, height=480)
-    if not renderer.initialize():
-        print("❌ Failed to initialize renderer")
-        renderer.destroy()
-        return
+    # renderer = Generic3DRenderer(width=640, height=480)
+    # if not renderer.initialize():
+    #     print("❌ Failed to initialize renderer")
+    #     renderer.destroy()
+    #     return
 
-    window = None
-    registered_keys: list[str] = []
+    # window = None
+    # registered_keys: list[str] = []
 
-    try:
-        # Create arrow mesh to visualize orientation
-        arrow_tip = trimesh.creation.cone(radius=0.2, height=0.5)
-        shaft = trimesh.creation.cylinder(radius=0.05, height=1.0)
-        shaft.apply_transform(create_translation_matrix(0, 0.5, 0))
-        arrow_tip.apply_transform(create_translation_matrix(0, 1.0, 0))
-        arrow_mesh = trimesh.util.concatenate([shaft, arrow_tip])
-        renderer.add_node("arrow", arrow_mesh)
+    # try:
+    #     # Create arrow mesh to visualize orientation
+    #     arrow_tip = trimesh.creation.cone(radius=0.2, height=0.5)
+    #     shaft = trimesh.creation.cylinder(radius=0.05, height=1.0)
+    #     shaft.apply_transform(create_translation_matrix(0, 0.5, 0))
+    #     arrow_tip.apply_transform(create_translation_matrix(0, 1.0, 0))
+    #     arrow_mesh = trimesh.util.concatenate([shaft, arrow_tip])
+    #     renderer.add_node("arrow", arrow_mesh)
 
-        # Add reference axes with colors
-        axes = create_coordinate_axes(length=2.0, radius=0.03)
-        import pyrender
-        materials = {
-            'x': pyrender.MetallicRoughnessMaterial(baseColorFactor=[1.0, 0.0, 0.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
-            'y': pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.0, 1.0, 0.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
-            'z': pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.0, 0.0, 1.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
-        }
-        renderer.add_node("x_axis", pyrender.Mesh.from_trimesh(axes['x'], material=materials['x']))
-        renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(axes['y'], material=materials['y']))
-        renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(axes['z'], material=materials['z']))
+    #     # Add reference axes with colors
+    #     axes = create_coordinate_axes(length=2.0, radius=0.03)
+    #     import pyrender
+    #     materials = {
+    #         'x': pyrender.MetallicRoughnessMaterial(baseColorFactor=[1.0, 0.0, 0.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
+    #         'y': pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.0, 1.0, 0.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
+    #         'z': pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.0, 0.0, 1.0, 1.0], metallicFactor=0.1, roughnessFactor=0.9),
+    #     }
+    #     renderer.add_node("x_axis", pyrender.Mesh.from_trimesh(axes['x'], material=materials['x']))
+    #     renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(axes['y'], material=materials['y']))
+    #     renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(axes['z'], material=materials['z']))
 
-        window = _create_window(title="Rotation Amplification", width=640, height=480)
+    #     window = _create_window(title="Rotation Amplification", width=640, height=480)
 
-        state = {'quit': False}
+    #     state = {'quit': False}
 
-        def request_quit():
-            state['quit'] = True
+    #     def request_quit():
+    #         state['quit'] = True
 
-        window.register_key_handler('q', request_quit)
-        window.register_key_handler('Escape', request_quit)
-        registered_keys = ['q', 'Escape']
+    #     window.register_key_handler('q', request_quit)
+    #     window.register_key_handler('Escape', request_quit)
+    #     registered_keys = ['q', 'Escape']
 
-        angle = 0.0
-        amplification_factor = 3.0
+    #     angle = 0.0
+    #     amplification_factor = 3.0
 
-        while window.update() and not state['quit']:
-            small_angle = 0.1 * np.sin(angle)
-            amplified_angle = small_angle * amplification_factor
+    #     while window.update() and not state['quit']:
+    #         small_angle = 0.1 * np.sin(angle)
+    #         amplified_angle = small_angle * amplification_factor
 
-            pose = create_rotation_matrix('x', amplified_angle) @ create_rotation_matrix('y', angle * 0.5)
-            renderer.set_pose("arrow", pose)
+    #         pose = create_rotation_matrix('x', amplified_angle) @ create_rotation_matrix('y', angle * 0.5)
+    #         renderer.set_pose("arrow", pose)
 
-            color, _ = renderer.render()
-            window.display_frame(color)
+    #         color, _ = renderer.render()
+    #         window.display_frame(color)
 
-            angle += 0.02
-            time.sleep(0.016)
+    #         angle += 0.02
+    #         time.sleep(0.016)
 
-        print("✅ Rotation amplification demo completed")
+    #     print("✅ Rotation amplification demo completed")
 
-    finally:
-        if window is not None:
-            if registered_keys:
-                _unregister_keys(window, registered_keys)
-            window.destroy()
-        renderer.destroy()
+    # finally:
+    #     if window is not None:
+    #         if registered_keys:
+    #             _unregister_keys(window, registered_keys)
+    #         window.destroy()
+    #     renderer.destroy()
 
 
 def main():
@@ -343,7 +396,11 @@ def main():
                        help='Path to folder containing frame.imu.csv file for real IMU data')
     parser.add_argument('--skip-amplification', action='store_true',
                        help='Skip the rotation amplification demo')
-    
+    parser.add_argument('--scale', '-s', type=float, default=2.0,
+                       help='Scale factor for probe and axes size (default: 2.0, try 2.0-5.0 for larger)')
+    parser.add_argument('--wireframe', '-w', action='store_true',
+                       help='Render in wireframe mode (shows mesh structure)')
+
     args = parser.parse_args()
     
     print("=" * 50)
@@ -365,8 +422,12 @@ def main():
     else:
         print("🔄 Using simulated IMU data")
     
+    print(f"📏 Scale factor: {args.scale}x (probe and axes will be {'larger' if args.scale > 1 else 'smaller' if args.scale < 1 else 'normal size'})")
+    if args.wireframe:
+        print("🔲 Wireframe mode enabled")
+    
     try:
-        demo_guidance_widget(data_folder=args.data_folder)
+        demo_guidance_widget(data_folder=args.data_folder, scale_factor=args.scale, wireframe=args.wireframe)
         
         if not args.skip_amplification:
             demo_rotation_amplification()

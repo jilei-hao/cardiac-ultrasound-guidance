@@ -99,9 +99,10 @@ class FrameDataSimulator(FrameDataInput):
             return FrameData(None, None, None)
             
         if self.current_frame_index >= len(self.frame_files):
-            # Reached end of frames, return None or loop back
-            print("🟡 Warning: Reached end of frame sequence")
-            return FrameData(None, None, None)
+            # Reached end of frames, restart the sequence
+            print("[FrameDataSimulator] Reached end of frame sequence, restarting from beginning")
+            self.current_frame_index = 0
+            self.start_time = time.time_ns()
             
         try:
             # Load the current frame image
