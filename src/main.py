@@ -9,7 +9,7 @@ import inference.landmark.landmark_prediction as lp
 # Import fourch_landmark pipeline
 from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 import inference.pose_classification.pose_classification as pc
-from inference.pose_classification import pose_classification as pc, PoseClassifierResultPooler
+from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 import ui.image_helpers as ih
 from ui.guidance_widget_renderer import GuidanceWidgetRenderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
@@ -141,7 +141,7 @@ def run_event_loop(options, config):
     weight_path = config["pose_classifier_imglmk_weight_path"]
   else:
     weight_path = config["pose_classifier_img_weight_path"]
-  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=weight_path)
+  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=weight_path, use_landmarks_for_estimation=options.imglmk)
   classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
 
   # Initialize the LVEF predictor
@@ -287,7 +287,7 @@ def run_event_loop(options, config):
         if app_settings.use_threshold_for_pose_classification:
           crnt_classifier_result = cla
         else:
-          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess)
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess, use_landmarks_for_estimation=options.imglmk)
           
       # push the classifier result to the queue
       classifier_queue.put(crnt_classifier_result)

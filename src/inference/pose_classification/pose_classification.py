@@ -32,7 +32,7 @@ def load_pretrained_model(device, use_landmarks_for_estimation = False, weight_p
     return model, preprocess
 
 
-def run_pose_classifier(model, device, input_image, landmarks, transform, use_landmarks_for_estimation = True):
+def run_pose_classifier(model, device, input_image, landmarks, transform, use_landmarks_for_estimation = False):
     model = model.to(device)
     model.eval()
     # input_image is a np array
