@@ -136,7 +136,12 @@ def run_event_loop(options, config):
     }
   )
   # landmark_model = None
-  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=config["pose_classifier_weight_path"])
+  weight_path = ""
+  if options.imglmk:
+    weight_path = config["pose_classifier_imglmk_weight_path"]
+  else:
+    weight_path = config["pose_classifier_img_weight_path"]
+  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=weight_path)
   classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
 
   # Initialize the LVEF predictor
@@ -423,11 +428,13 @@ def main():
   parser.add_argument('--save_folder', type=str, default="output", help='Folder to save images.')
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
   parser.add_argument('--upload_url', type=str, default="http://localhost:8000/upload", help='URL to upload the frame to.')
+  parser.add_argument('--imglmk', default=False, action='store_true', help='Use image + landmarks for pose classification.')
   options = parser.parse_args()
 
   config = {
     "landmark_weight_path": "weights/landmark-prediction_v1.pth",
-    "pose_classifier_weight_path": "weights/post-est-256x256_v1.pth",
+    "pose_classifier_imglmk_weight_path": "weights/postest-imglmk-v1.pth",
+    "pose_classifier_img_weight_path": "weights/postest-img-v1.pth",
     "lvef_weight_path": "weights/echonet_v1.pt",
     "rotation_config_path": "src/inference/rotation/config.json",
     "rotation_checkpoint_path": "weights/rotation-prediction_v1.pt",

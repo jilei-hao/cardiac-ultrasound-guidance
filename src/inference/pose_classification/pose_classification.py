@@ -4,7 +4,7 @@ import numpy as np
 from torchvision.models import resnet18, ResNet18_Weights
 import matplotlib.pyplot as plt
 
-def load_pretrained_model(device, use_landmarks_for_estimation = True, weight_path=None):
+def load_pretrained_model(device, use_landmarks_for_estimation = False, weight_path=None):
     # ---- CHANGE THIS VARIABLE FOR IMAGE ONLY OR IMAGE + LANDMARKS ----
     
     model = resnet18()
