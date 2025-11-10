@@ -21,8 +21,21 @@ from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
 import requests
 from queue import Queue
-import data_access.clarius.clarius_streamer as ClariusStreamer
+from common.add_clarius_lib_path import setup_clarius_environment
 from data_access.screen_capture.screen_capture import ScreenCapture
+
+# Conditionally import ClariusStreamer
+try:
+    # Setup Clarius environment first
+    clarius_available, clarius_error = setup_clarius_environment()
+    if clarius_available:
+        import data_access.clarius.clarius_streamer as ClariusStreamer
+    else:
+        print(f"Warning: Clarius not available - {clarius_error}")
+        ClariusStreamer = None
+except Exception as e:
+    print(f"Warning: Failed to setup Clarius environment - {e}")
+    ClariusStreamer = None
 
 # define a queue
 classifier_queue = Queue()
@@ -32,6 +45,10 @@ def run_event_loop(options, config):
 
   # Check source and initialize 
   if options.source == 'clarius':
+    if ClariusStreamer is None:
+      print("❌ Error: Clarius SDK is not available. Cannot connect to Clarius probe.")
+      print("   Please ensure the Clarius SDK is properly installed.")
+      return
     print(f"🔌 Connecting to Clarius probe at {options.clarius_ip}:{options.clarius_port}...")
     ClariusStreamer.configure(options.clarius_ip, options.clarius_port, "research")
     ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
@@ -111,7 +128,8 @@ def run_event_loop(options, config):
       print("Keyboard Event: [b] pressed. Toggling border to ", app_settings.show_border)
     elif event.keysym == "d":  # Toggle debug info
       app_settings.print_debug_info = not app_settings.print_debug_info
-      ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
+      if ClariusStreamer is not None:
+        ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
       print("Keyboard Event: [d] pressed. Toggling debug info to ", app_settings.print_debug_info)
 
   # Bind key events to the root window
@@ -232,7 +250,11 @@ def run_event_loop(options, config):
       if options.source == 'screen':
         frame_data = screen_capture.get_frame()
       elif options.source == 'clarius':
-        frame_data = ClariusStreamer.get_frame()
+        if ClariusStreamer is not None:
+          frame_data = ClariusStreamer.get_frame()
+        else:
+          print("Error: ClariusStreamer is not available")
+          break
 
       if frame_data is None:
         continue
@@ -411,7 +433,7 @@ def run_event_loop(options, config):
 
   except KeyboardInterrupt:
     print("\n🛑 Capture stopped manually.")
-    if options.source == 'clarius':
+    if options.source == 'clarius' and ClariusStreamer is not None:
       ClariusStreamer.stop()
     else:
       screen_capture.stop()

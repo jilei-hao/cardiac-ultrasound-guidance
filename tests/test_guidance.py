@@ -36,17 +36,21 @@ from ui.guidance_widget import create_guidance_widget_renderer  # Unified factor
 from inference.pose_classification import pose_classification
 from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
+from common.add_clarius_lib_path import setup_clarius_environment
 import ui.image_helpers as ih
 
-# Conditional import for ClariusStreamer to avoid dependency issues
+# Conditionally import ClariusStreamer
 try:
-    import data_access.clarius.clarius_streamer as ClariusStreamer
-    CLARIUS_AVAILABLE = True
-except ImportError as e:
-    print(f"⚠️ Clarius SDK not available: {e}")
-    print("   Clarius streaming functionality will be disabled.")
+    # Setup Clarius environment first
+    clarius_available, clarius_error = setup_clarius_environment()
+    if clarius_available:
+        import data_access.clarius.clarius_streamer as ClariusStreamer
+    else:
+        print(f"Warning: Clarius not available - {clarius_error}")
+        ClariusStreamer = None
+except Exception as e:
+    print(f"Warning: Failed to setup Clarius environment - {e}")
     ClariusStreamer = None
-    CLARIUS_AVAILABLE = False
 
 class InferenceRunner:
     def __init__(self):
