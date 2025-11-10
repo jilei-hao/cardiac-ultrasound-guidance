@@ -3,6 +3,9 @@ from PIL import Image
 import queue
 from data_access.frame_data import FrameData
 from data_access.frame_data_input import FrameDataInput
+import os
+import sys
+from pathlib import Path
 
 class ClariusSettings:
   def __init__(self, ip, port, path, width=512, height=512):
@@ -220,6 +223,13 @@ class ClariusStreamer(FrameDataInput):
     self.width = width
     self.height = height
     self._configured = False
+
+    # Add the clarius library path to system library paths
+    clarius_lib_path = Path(__file__).parent.absolute()
+    if sys.platform == "linux" or sys.platform == "linux2":
+      os.environ["LD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+    elif sys.platform == "darwin":
+      os.environ["DYLD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("DYLD_LIBRARY_PATH", "")
   
   def start(self):
     """Initialize and start the Clarius probe connection."""

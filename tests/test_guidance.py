@@ -38,6 +38,15 @@ from inference.pose_classification.pose_classification import PoseClassifierResu
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import ui.image_helpers as ih
 
+# Conditional import for ClariusStreamer to avoid dependency issues
+try:
+    import data_access.clarius.clarius_streamer as ClariusStreamer
+    CLARIUS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Clarius SDK not available: {e}")
+    print("   Clarius streaming functionality will be disabled.")
+    ClariusStreamer = None
+    CLARIUS_AVAILABLE = False
 
 class InferenceRunner:
     def __init__(self):
@@ -80,9 +89,14 @@ class InferenceRunner:
         return cla, landmarks_tensor, rotation_prediction, pose_classification_prediction
 
 
-def test_guidance_unified(imu_frames_folder, renderer_type='auto', renderer_args=None):
-    """Test unified guidance functionality with configurable renderer type."""
+def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_port=None, renderer_type='auto', renderer_args=None):
+    """Test unified guidance functionality with configurable renderer type and data source."""
     print(f"=== Guidance Test ({renderer_type.upper()}) ===")
+    print(f"Source: {source}")
+    if source == 'frames':
+        print(f"Frames folder: {frames_folder}")
+    elif source == 'clarius':
+        print(f"Clarius IP: {clarius_ip}, Port: {clarius_port}")
 
     # Create dual window setup
     main_window, guidance_window = create_dual_window_setup(
@@ -150,10 +164,31 @@ def test_guidance_unified(imu_frames_folder, renderer_type='auto', renderer_args
     print("  '3' - Switch to 3D renderer")
     print("  'a' - Switch to auto renderer")
     
-    # Create simulator with the provided frame folder
-    simulator = FrameDataSimulator(
-        frames_folder=imu_frames_folder
-    )
+    # Initialize data source
+    simulator = None
+    if source == 'frames':
+        # Create simulator with the provided frame folder
+        simulator = FrameDataSimulator(frames_folder=frames_folder)
+    elif source == 'clarius':
+        # Check if Clarius is available before trying to use it
+        if not CLARIUS_AVAILABLE:
+            print("❌ Clarius SDK is not available. Cannot use Clarius streaming.")
+            main_window.destroy()
+            guidance_window.destroy()
+            return
+            
+        # Initialize Clarius streamer
+        print(f"🔌 Connecting to Clarius probe at {clarius_ip}:{clarius_port}...")
+        try:
+            ClariusStreamer.configure(clarius_ip, clarius_port, "research")
+            ClariusStreamer.set_print_debug_info(False)
+            ClariusStreamer.start()
+            print("✅ Connected to Clarius probe.")
+        except Exception as e:
+            print(f"❌ Failed to connect to Clarius probe: {e}")
+            main_window.destroy()
+            guidance_window.destroy()
+            return
 
     inference_runner = InferenceRunner()
 
@@ -212,7 +247,8 @@ def test_guidance_unified(imu_frames_folder, renderer_type='auto', renderer_args
     )
     
     try:
-        simulator.start()
+        if simulator:
+            simulator.start()
         
         frame_count = 0
         print("\nStarting display loop...")
@@ -234,35 +270,54 @@ def test_guidance_unified(imu_frames_folder, renderer_type='auto', renderer_args
                 
                 renderer_switch_mode = False
             
-            # Get frame from simulator
-            frame_data = simulator.get_frame()
-            
-            if frame_data.image is None:
-                # End of sequence, reset
-                simulator.reset()
-                continue
+            # Get frame from data source
+            if source == 'frames':
+                frame_data = simulator.get_frame()
+                if frame_data.image is None:
+                    # End of sequence, reset
+                    simulator.reset()
+                    continue
+            elif source == 'clarius':
+                if not CLARIUS_AVAILABLE:
+                    print("❌ Clarius SDK not available")
+                    break
+                frame_data = ClariusStreamer.get_frame()
+                if frame_data is None:
+                    continue
 
-            imu = frame_data.imu
-            qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
-            
-            # Convert PIL image to numpy array (RGB format)
-            orig_frame = np.array(frame_data.image)
-            
-            # Handle different image formats properly
-            if len(orig_frame.shape) == 3 and orig_frame.shape[2] == 3:
-                # RGB format
-                orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_RGB2GRAY)
-            elif len(orig_frame.shape) == 3 and orig_frame.shape[2] == 4:
-                # RGBA format
-                orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_RGBA2GRAY)
-                orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_RGBA2RGB)  # Convert to RGB for display
-            elif len(orig_frame.shape) == 2:
-                # Already grayscale
-                orig_gray = orig_frame
-                orig_frame = cv2.cvtColor(orig_gray, cv2.COLOR_GRAY2RGB)  # Convert to RGB for display
+            # Extract IMU data
+            if frame_data.imu is not None:
+                imu = frame_data.imu
+                qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
             else:
-                print(f"🛑 Unsupported image format: {orig_frame.shape}")
-                continue
+                # Default quaternion values (no rotation)
+                qw, qx, qy, qz = 1.0, 1.0, 0.0, 0.0
+            
+            # Convert image to numpy array
+            if source == 'frames':
+                # Convert PIL image to numpy array (RGB format)
+                orig_frame = np.array(frame_data.image)
+                
+                # Handle different image formats properly
+                if len(orig_frame.shape) == 3 and orig_frame.shape[2] == 3:
+                    # RGB format
+                    orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_RGB2GRAY)
+                elif len(orig_frame.shape) == 3 and orig_frame.shape[2] == 4:
+                    # RGBA format
+                    orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_RGBA2GRAY)
+                    orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_RGBA2RGB)  # Convert to RGB for display
+                elif len(orig_frame.shape) == 2:
+                    # Already grayscale
+                    orig_gray = orig_frame
+                    orig_frame = cv2.cvtColor(orig_gray, cv2.COLOR_GRAY2RGB)  # Convert to RGB for display
+                else:
+                    print(f"🛑 Unsupported image format: {orig_frame.shape}")
+                    continue
+            elif source == 'clarius':
+                # Clarius frame is already numpy array in BGRA format
+                orig_frame = np.array(frame_data.image)
+                orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
+                orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2RGB)  # Convert to RGB for display
 
             cla, landmarks_tensor, rotation_prediction, pose_classification_prediction = inference_runner.run_inference(orig_gray)
 
@@ -349,7 +404,14 @@ def test_guidance_unified(imu_frames_folder, renderer_type='auto', renderer_args
         traceback.print_exc()
         
     finally:
-        simulator.stop()
+        if simulator:
+            simulator.stop()
+        if source == 'clarius' and CLARIUS_AVAILABLE:
+            try:
+                ClariusStreamer.stop()
+                print("✅ Clarius connection closed.")
+            except Exception as e:
+                print(f"⚠️ Error closing Clarius connection: {e}")
         if probe_renderer:
             probe_renderer.destroy()
         main_window.destroy()
@@ -360,13 +422,17 @@ def test_guidance_unified(imu_frames_folder, renderer_type='auto', renderer_args
 def main():
     """Run unified guidance tests with command line options."""
     parser = argparse.ArgumentParser(
-        description="Unified Guidance Widget Test - supports both 2D and 3D renderers",
+        description="Unified Guidance Widget Test - supports both 2D and 3D renderers with frames or Clarius streaming",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python test_guidance.py /path/to/frames --renderer auto
-  python test_guidance.py /path/to/frames --renderer 3d --scale 2.5 --wireframe
-  python test_guidance.py /path/to/frames --renderer 2d --axis-thickness 5
+  # Using frames folder
+  python test_guidance.py frames /path/to/frames --renderer auto
+  python test_guidance.py frames /path/to/frames --renderer 3d --scale 2.5 --wireframe
+  
+  # Using Clarius streaming
+  python test_guidance.py clarius --clarius 192.168.1.1 5828 --renderer 2d
+  python test_guidance.py clarius --clarius 10.0.0.1 5828 --renderer auto
   
 During execution:
   Press '2' to switch to 2D renderer
@@ -376,8 +442,18 @@ During execution:
         """
     )
     
+    parser.add_argument('source', 
+                       choices=['frames', 'clarius'],
+                       help='Data source: frames folder or Clarius streaming')
+    
     parser.add_argument('frames_folder', 
-                       help='Path to the frame_imu folder containing test data')
+                       nargs='?',
+                       help='Path to the frame_imu folder containing test data (required for frames source)')
+    
+    parser.add_argument('--clarius', '-c',
+                       nargs=2,
+                       metavar=('IP', 'PORT'),
+                       help='Clarius probe IP address and port (required for clarius source)')
     
     parser.add_argument('--renderer', '-r', 
                        choices=['2d', '3d', 'auto'], 
@@ -412,10 +488,29 @@ During execution:
 
     args = parser.parse_args()
     
+    # Validate arguments based on source
+    if args.source == 'frames':
+        if not args.frames_folder:
+            parser.error("frames_folder is required when using 'frames' source")
+        if not os.path.exists(args.frames_folder):
+            parser.error(f"Frames folder '{args.frames_folder}' does not exist")
+        clarius_ip, clarius_port = None, None
+    elif args.source == 'clarius':
+        if not CLARIUS_AVAILABLE:
+            parser.error("Clarius SDK is not available. Cannot use 'clarius' source. Please install the Clarius SDK or use 'frames' source instead.")
+        if not args.clarius:
+            parser.error("--clarius IP PORT is required when using 'clarius' source")
+        clarius_ip, clarius_port = args.clarius[0], int(args.clarius[1])
+        args.frames_folder = None
+    
     print("Unified Guidance Widget Test")
     print("=" * 50)
+    print(f"Source: {args.source}")
+    if args.source == 'frames':
+        print(f"Frames folder: {args.frames_folder}")
+    elif args.source == 'clarius':
+        print(f"Clarius IP: {clarius_ip}, Port: {clarius_port}")
     print(f"Renderer type: {args.renderer}")
-    print(f"Frames folder: {args.frames_folder}")
     print(f"Window size: {args.window_size}")
     print(f"Background: {args.background_color}")
     
@@ -432,15 +527,10 @@ During execution:
     
     print("=" * 50)
     
-    # Validate frames folder
-    if not os.path.exists(args.frames_folder):
-        print(f"❌ Error: Frames folder '{args.frames_folder}' does not exist")
-        return
-    
-    # Build renderer arguments
+    # Construct renderer arguments from command line
     renderer_args = {
         'window_size': tuple(args.window_size),
-        'background_color': tuple(args.background_color)
+        'background_color': tuple(args.background_color),
     }
     
     # Add renderer-specific arguments
@@ -448,18 +538,25 @@ During execution:
         renderer_args.update({
             'axis_thickness': args.axis_thickness,
             'probe_scale': args.probe_scale,
-            'rotation_amplification': args.rotation_amplification
+            'rotation_amplification': args.rotation_amplification,
         })
     
     if args.renderer in ['3d', 'auto']:
         renderer_args.update({
             'scale_factor': args.scale,
-            'wireframe': args.wireframe
+            'wireframe': args.wireframe,
         })
     
     try:
         # Run the unified test
-        test_guidance_unified(args.frames_folder, args.renderer, renderer_args)
+        test_guidance_unified(
+            source=args.source,
+            frames_folder=args.frames_folder,
+            clarius_ip=clarius_ip,
+            clarius_port=clarius_port,
+            renderer_type=args.renderer,
+            renderer_args=renderer_args
+        )
         
     except KeyboardInterrupt:
         print("\n🛑 Test interrupted by user")
