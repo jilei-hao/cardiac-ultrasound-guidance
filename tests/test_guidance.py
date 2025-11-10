@@ -175,7 +175,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
         simulator = FrameDataSimulator(frames_folder=frames_folder)
     elif source == 'clarius':
         # Check if Clarius is available before trying to use it
-        if not CLARIUS_AVAILABLE:
+        if not clarius_available:
             print("❌ Clarius SDK is not available. Cannot use Clarius streaming.")
             main_window.destroy()
             guidance_window.destroy()
@@ -282,7 +282,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                     simulator.reset()
                     continue
             elif source == 'clarius':
-                if not CLARIUS_AVAILABLE:
+                if not clarius_available:
                     print("❌ Clarius SDK not available")
                     break
                 frame_data = ClariusStreamer.get_frame()
@@ -410,7 +410,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
     finally:
         if simulator:
             simulator.stop()
-        if source == 'clarius' and CLARIUS_AVAILABLE:
+        if source == 'clarius' and clarius_available:
             try:
                 ClariusStreamer.stop()
                 print("✅ Clarius connection closed.")
@@ -500,7 +500,7 @@ During execution:
             parser.error(f"Frames folder '{args.frames_folder}' does not exist")
         clarius_ip, clarius_port = None, None
     elif args.source == 'clarius':
-        if not CLARIUS_AVAILABLE:
+        if not clarius_available:
             parser.error("Clarius SDK is not available. Cannot use 'clarius' source. Please install the Clarius SDK or use 'frames' source instead.")
         if not args.clarius:
             parser.error("--clarius IP PORT is required when using 'clarius' source")
