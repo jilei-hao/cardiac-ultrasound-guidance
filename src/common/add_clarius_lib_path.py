@@ -91,7 +91,10 @@ def check_clarius_availability():
         add_clarius_lib_path()
         
         # Try to import the clarius streamer
-        from ..data_access.clarius.clarius_streamer import ClariusStreamer
+        # Add the src directory to the Python path
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+        from data_access.clarius.clarius_streamer import ClariusStreamer
         return True
     except ImportError as e:
         print(f"Clarius SDK not available: {e}")
