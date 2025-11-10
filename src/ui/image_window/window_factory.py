@@ -1,17 +1,37 @@
 import platform
 import sys
-from typing import Type, Dict, Any
+from typing import Type, Dict, Any, Optional
 from .abstract_image_window import AbstractImageWindow
 
 
-def get_image_window_class() -> Type[AbstractImageWindow]:
+def _normalize_backend(backend: Optional[str]) -> Optional[str]:
+    if backend is None:
+        return None
+    backend = backend.lower()
+    if backend in {"tkinter", "tk"}:
+        return "tk"
+    if backend in {"opencv", "cv2", "highgui"}:
+        return "opencv"
+    return backend
+
+
+def get_image_window_class(backend: Optional[str] = None) -> Type[AbstractImageWindow]:
     """
     Factory function to get the appropriate image window class for the current platform.
+    Allows explicitly selecting a backend when needed.
     
     Returns:
         Class: Platform-specific image window class
     """
+    backend = _normalize_backend(backend)
     system = platform.system().lower()
+
+    if backend == "tk":
+        from .macos_image_window import MacOSImageWindow
+        return MacOSImageWindow
+    if backend == "opencv":
+        from .linux_image_window import LinuxImageWindow
+        return LinuxImageWindow
     
     if system == 'darwin':  # macOS
         from .macos_image_window import MacOSImageWindow
@@ -26,17 +46,18 @@ def get_image_window_class() -> Type[AbstractImageWindow]:
         return LinuxImageWindow
 
 
-def create_image_window(**kwargs) -> AbstractImageWindow:
+def create_image_window(*, backend: Optional[str] = None, **kwargs) -> AbstractImageWindow:
     """
     Factory function to create an appropriate image window for the current platform.
     
     Args:
+        backend: Optional explicit backend ('tk' or 'opencv')
         **kwargs: Keyword arguments passed to the window constructor
         
     Returns:
         AbstractImageWindow: Platform-specific image window instance
     """
-    WindowClass = get_image_window_class()
+    WindowClass = get_image_window_class(backend=backend)
     return WindowClass(**kwargs)
 
 

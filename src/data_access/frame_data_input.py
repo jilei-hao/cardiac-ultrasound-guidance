@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from data_access.frame_data import FrameData
+from .frame_data import FrameData
 
 class FrameDataInput(ABC):
     """

@@ -2,8 +2,8 @@ import os
 import time
 import pandas as pd
 from PIL import Image
-from data_access.frame_data import FrameData, IMUData
-from data_access.frame_data_input import FrameDataInput
+from ..frame_data import FrameData, IMUData
+from ..frame_data_input import FrameDataInput
 
 
 class FrameDataSimulator(FrameDataInput):
