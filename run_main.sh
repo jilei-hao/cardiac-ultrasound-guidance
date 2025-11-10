@@ -2,7 +2,7 @@
 
 server_ip=141.212.114.250
 
-source initialize_envs.sh
+# source initialize_envs.sh
 
 # python3 src/main.py \
 #   --source clarius \

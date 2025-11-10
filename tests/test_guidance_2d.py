@@ -26,7 +26,7 @@ from data_access.simulator import FrameDataSimulator
 from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 from inference.rotation.rotation_predictor import create_rotation_predictor
 from inference import inference_helper as ihp
-from ui.guidance_widget_renderer import GuidanceWidgetRenderer
+from ui.guidance_widget import create_guidance_widget_renderer
 from inference.pose_classification import pose_classification
 from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
@@ -125,8 +125,9 @@ def test_guidance_2d(imu_frames_folder):
 
     inference_runner = InferenceRunner()
 
-    probe_renderer = GuidanceWidgetRenderer(
+    probe_renderer = create_guidance_widget_renderer(
         probe_path=os.getenv("PROBE_MESH_PATH"),
+        renderer_type='2d',  # Force 2D for this test
         background_color=(0, 0, 0),  # Black background
         predicted_axis_opacity=0.6,  # 60% opacity for predicted axes
         axis_thickness=3,  # 
