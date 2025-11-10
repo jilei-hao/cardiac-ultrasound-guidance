@@ -71,7 +71,7 @@ class InferenceRunner:
             device=self.__device
         )
 
-        _model, _preprocess = pose_classification.load_pretrained_model(self.__device, weight_path=os.getenv("POSE_EST_WEIGHTS"))
+        _model, _preprocess = pose_classification.load_pretrained_model(self.__device, weight_path=os.getenv("POSE_EST_IMG_WEIGHTS"))
         self.__pose_classifier_model = _model
         self.__pose_classifier_preprocess = _preprocess
         self.__pose_classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
