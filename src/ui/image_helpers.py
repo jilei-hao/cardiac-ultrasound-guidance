@@ -154,3 +154,23 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
 def draw_stl_model(input_frame, stl_path, position=(150, 150), size=80, qw=1.0, qx=0.0, qy=0.0, qz=0.0):
     R = quaternion_to_rotation_matrix(qw, qx, qy, qz)
     return draw_stl_simplified(input_frame, stl_path, position, size, R, color=(180, 200, 220), thickness=2)
+
+
+def draw_text_on_frame(input_frame, text):
+    # Define the font and scale
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = input_frame.shape[0] / 400
+    font_color = (255, 255, 255)  # White color
+    thickness = int(font_scale * 2)
+
+    # Get the text size
+    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+
+    # Calculate the position to the lower right corner
+    text_x = input_frame.shape[1] - text_size[0] - 20  # 20 pixels from the right
+    text_y = input_frame.shape[0] - text_size[1] - 20  # 20 pixels from the bottom
+
+    # Draw the text on the frame
+    cv2.putText(input_frame, text, (text_x, text_y), font, font_scale, font_color, thickness)
+
+    return input_frame

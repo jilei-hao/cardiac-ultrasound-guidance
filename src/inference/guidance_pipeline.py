@@ -84,7 +84,7 @@ class GuidancePipeline:
 
     def run_lvef_async(self):
         if (self.__lvef_predictor.is_buffer_video_good() == False):
-            print("[GuidancePipeline] LVEF prediction skipped: insufficient good quality frames in buffer")
+            # print("[GuidancePipeline] LVEF prediction skipped: insufficient good quality frames in buffer")
             return None
         
         """Submit LVEF prediction to thread pool."""

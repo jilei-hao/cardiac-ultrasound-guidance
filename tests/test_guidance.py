@@ -314,7 +314,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
             result_frame = ih.add_rgb_border_to_result(result_frame, pose_classification_prediction_rgb)
 
             if latest_lvef is not None:
-                ih.draw_text_on_frame(result_frame, "LVEF: " + str(round(latest_lvef.item())) + "%")
+                ih.draw_text_on_frame(result_frame, "LVEF: " + str(round(latest_lvef)) + "%")
             # --------------------------------------
             # Render guidance window (unified interface)
             # --------------------------------------
