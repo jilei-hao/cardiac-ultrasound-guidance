@@ -63,7 +63,7 @@ class FourChamberLandmarkRenderer:
                 50: (180, 100, 255),      # Left Ventricle (LV) - Bright Pink/Magenta
                 100: (50, 200, 200),      # Right Ventricle (RV) - Bright Yellow
                 150: (150, 255, 100),     # Left Atrium (LA) - Bright Green
-                200: (100, 255, 150),     # Right Atrium (RA) - Bright Orange
+                200: (100, 150, 255),     # Right Atrium (RA) - Bright Orange
             }
         else:
             self.color_map = color_map
@@ -113,7 +113,7 @@ class FourChamberLandmarkRenderer:
         if self.color_legend_bgra is None:
             return input_frame
         
-        overlay_color_legend(input_frame, self.color_legend_bgra, top=10, left=10, pct_width=0.25, margin=20)
+        overlay_color_legend(input_frame, self.color_legend_bgra, top=10, left=10, pct_width=0.2, margin=20)
         return input_frame
     
     def overlay_landmarks(

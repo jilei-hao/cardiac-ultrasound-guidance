@@ -42,7 +42,7 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
     
     if has_labels:
         # Use FourChamberLandmarkRenderer for 4-chamber landmarks
-        from .four_chamber_landmark.fourch_landmark_renderer import FourChamberLandmarkRenderer
+        from .fourch_landmark_renderer import FourChamberLandmarkRenderer
         
         renderer = FourChamberLandmarkRenderer(
             landmark_radius=app_settings.landmark_radius,

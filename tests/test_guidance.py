@@ -26,18 +26,13 @@ load_dotenv()  # Load environment variables from .env file
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 # Unified imports using the factory pattern
-from inference.fourch_landmark.fourch_landmark_pipeline import run_fourch_core_prediction
 from ui.image_window import create_dual_window_setup
 from data_access.simulator import FrameDataSimulator
-from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
-from inference.rotation.rotation_predictor import create_rotation_predictor
-from inference import inference_helper as ihp
 from ui.guidance_widget import create_guidance_widget_renderer  # Unified factory
-from inference.pose_classification import pose_classification
-from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 from common.add_clarius_lib_path import setup_clarius_environment
 import ui.image_helpers as ih
+from inference.guidance_pipeline import GuidancePipeline, GuidancePipelineConfig
 
 # Conditionally import ClariusStreamer
 try:
@@ -52,45 +47,7 @@ except Exception as e:
     print(f"Warning: Failed to setup Clarius environment - {e}")
     ClariusStreamer = None
 
-class InferenceRunner:
-    def __init__(self):
-        self.__device = ihp.get_device()
-        self.__landmark_pipeline = configure_fourch_landmark_pipeline(
-            weight_path=os.getenv("4CH_WEIGHTS"),
-            device=self.__device,
-            landmarks_per_chamber={
-                50: 12,   # Left Ventricle (LV)
-                100: 12,  # Right Ventricle (RV)
-                150: 12,  # Left Atrium (LA)
-                200: 12,  # Right Atrium (RA)
-            }
-        )
-        self.__rotation_predictor = create_rotation_predictor(
-            config_path=os.getenv("ROTATION_PREDICTION_CONFIG"),
-            checkpoint_path=os.getenv("ROTATION_PREDICTION_WEIGHTS"),
-            device=self.__device
-        )
 
-        _model, _preprocess = pose_classification.load_pretrained_model(self.__device, weight_path=os.getenv("POSE_EST_IMG_WEIGHTS"))
-        self.__pose_classifier_model = _model
-        self.__pose_classifier_preprocess = _preprocess
-        self.__pose_classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
-
-    def run_inference(self, frame):
-        # Run inference on the given frame using the landmark pipeline
-        cla, landmarks_tensor = run_fourch_core_prediction(self.__landmark_pipeline, frame)
-        rotation_prediction = self.__rotation_predictor.predict_rotation(frame)
-        pose_classification_prediction = pose_classification.run_pose_classifier(
-            self.__pose_classifier_model,
-            self.__device,
-            frame,
-            landmarks_tensor,
-            self.__pose_classifier_preprocess
-        )
-        self.__pose_classifier_result_pooler.add_result(pose_classification_prediction)
-        pose_classification_prediction = self.__pose_classifier_result_pooler.get_pooled_result()
-
-        return cla, landmarks_tensor, rotation_prediction, pose_classification_prediction
 
 
 def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_port=None, renderer_type='auto', renderer_args=None):
@@ -101,6 +58,22 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
         print(f"Frames folder: {frames_folder}")
     elif source == 'clarius':
         print(f"Clarius IP: {clarius_ip}, Port: {clarius_port}")
+
+    # Initialize Guidance Pipeline
+    guidance_config = GuidancePipelineConfig(
+        fourch_landmark_weights=os.getenv("4CH_WEIGHTS"),
+        rotation_prediction_config=os.getenv("ROTATION_PREDICTION_CONFIG"),
+        rotation_prediction_weights=os.getenv("ROTATION_PREDICTION_WEIGHTS"),
+        pose_classification_weights=os.getenv("POSE_EST_IMG_WEIGHTS"),
+        lvef_weights=os.getenv("LVEF_WEIGHTS"),
+        landmarks_per_chamber={
+            50: 24,   # Left Ventricle (LV)
+            100: 12,  # Right Ventricle (RV)
+            150: 12,  # Left Atrium (LA)
+            200: 12,  # Right Atrium (RA)
+        }
+    )
+    guidance_pipeline = GuidancePipeline(guidance_config)
 
     # Create dual window setup
     main_window, guidance_window = create_dual_window_setup(
@@ -194,15 +167,13 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
             guidance_window.destroy()
             return
 
-    inference_runner = InferenceRunner()
-
     # Create initial renderer
     def create_renderer(rtype, args=None):
         """Create renderer with specified type and arguments."""
         default_args = {
             'probe_path': os.getenv("PROBE_MESH_PATH"),
             'renderer_type': rtype,
-            'background_color': (20, 20, 40),
+            'background_color': (0, 0, 0),
             'render_mode': 'fullscreen',
             'window_size': (400, 400),
             'fallback_to_2d': True
@@ -324,7 +295,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                 orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
                 orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2RGB)  # Convert to RGB for display
 
-            cla, landmarks_tensor, rotation_prediction, pose_classification_prediction_rgb = inference_runner.run_inference(orig_gray)
+            cla, landmarks_tensor, rotation_prediction, pose_classification_prediction_rgb = guidance_pipeline.run_inference(orig_gray)
 
             # ---------------------------------------
             # Render ultrasound window
@@ -488,7 +459,7 @@ During execution:
                        metavar=('WIDTH', 'HEIGHT'),
                        help='Window size for guidance renderer')
     
-    parser.add_argument('--background-color', type=int, nargs=3, default=[20, 20, 40],
+    parser.add_argument('--background-color', type=int, nargs=3, default=[0, 0, 0],
                        metavar=('R', 'G', 'B'),
                        help='Background color RGB values')
 
