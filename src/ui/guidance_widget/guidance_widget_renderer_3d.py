@@ -7,6 +7,7 @@ import os
 import numpy as np
 import trimesh
 import time
+from scipy.spatial.transform import Rotation as R
 from typing import Optional, Tuple
 
 from .guidance_widget_renderer import GuidanceWidgetRenderer
@@ -30,6 +31,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  wireframe=False,
                  window_size=(640, 480),
                  render_mode='fullscreen',
+                 rotation_amplification=3.0,
                  **kwargs):
         """
         Initialize 3D guidance widget renderer.
@@ -41,6 +43,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             wireframe: Whether to render in wireframe mode
             window_size: Window dimensions (width, height)
             render_mode: Rendering mode ('fullscreen' or 'overlay')
+            rotation_amplification: Amplification factor for rotation prediction
             **kwargs: Additional configuration parameters
         """
         super().__init__(probe_path, **kwargs)
@@ -49,6 +52,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.background_color = background_color
         self.scale_factor = scale_factor
         self.wireframe = wireframe
+        self.rotation_amplification = rotation_amplification
         self.window_size = window_size
         self.render_mode = render_mode
         
@@ -125,6 +129,11 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             length=1.2 * self.scale_factor, 
             radius=0.02 * self.scale_factor
         )
+        # Create predicted axes (semi-transparent version)
+        self.predicted_axes = self._create_axes_cylinders(
+            length=1.2 * self.scale_factor,
+            radius=0.02 * self.scale_factor
+        )
     
     def _create_axes_cylinders(self, length: float = 1.0, radius: float = 0.02) -> dict:
         """Create coordinate axes as trimesh cylinder objects."""
@@ -174,17 +183,41 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 metallicFactor=0.3,
                 roughnessFactor=0.6
             ),
+            # Semi-transparent versions for predicted axes
+            'x_predicted': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[1.0, 0.2, 0.2, 0.3],  # Bright red, 30% opacity
+                metallicFactor=0.3,
+                roughnessFactor=0.6,
+                alphaMode='BLEND'
+            ),
+            'y_predicted': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.2, 1.0, 0.2, 0.3],  # Bright green, 30% opacity
+                metallicFactor=0.3,
+                roughnessFactor=0.6,
+                alphaMode='BLEND'
+            ),
+            'z_predicted': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.2, 0.2, 1.0, 0.3],  # Bright blue, 30% opacity
+                metallicFactor=0.3,
+                roughnessFactor=0.6,
+                alphaMode='BLEND'
+            ),
         }
     
     def _setup_scene(self):
         """Add meshes to the scene."""
         import pyrender
         
-        # Add probe and axes
+        # Add probe and current axes
         self.renderer.add_node("probe", self.probe_mesh, material=self.materials['probe'])
         self.renderer.add_node("x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x']))
         self.renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y']))
         self.renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z']))
+        
+        # Add predicted axes (semi-transparent)
+        self.renderer.add_node("predicted_x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x_predicted']))
+        self.renderer.add_node("predicted_y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y_predicted']))
+        self.renderer.add_node("predicted_z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z_predicted']))
     
     def _setup_camera(self):
         """Setup camera position and orientation."""
@@ -208,6 +241,39 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_pose[:3, 2] = -forward
         self.renderer.set_camera_pose(self.camera_pose)
     
+    def amplify_rotation_prediction(self, rotation_matrix, current_imu_rotation):
+        """
+        Amplify rotation prediction and combine with current IMU rotation.
+        
+        Args:
+            rotation_matrix: 3x3 rotation matrix (raw prediction correction)
+            current_imu_rotation: 4x4 transformation matrix (current IMU pose)
+            
+        Returns:
+            3x3 rotation matrix (amplified combined rotation)
+        """
+        if rotation_matrix is None:
+            return None
+            
+        # Extract 3x3 rotation from 4x4 current_imu_rotation
+        current_rotation_3x3 = current_imu_rotation[:3, :3] if current_imu_rotation.shape == (4, 4) else current_imu_rotation
+        
+        # Ensure rotation_matrix is 3x3
+        rotation_3x3 = rotation_matrix[:3, :3] if rotation_matrix.shape == (4, 4) else rotation_matrix
+        
+        # Extract rotation angles and amplify
+        r = R.from_matrix(rotation_3x3)
+        angles = r.as_euler('xyz', degrees=True)
+        exaggerated_angles = angles * self.rotation_amplification
+        exaggerated_matrix = R.from_euler('xyz', exaggerated_angles, degrees=True).as_matrix()
+        
+        # Apply inverse transformation
+        exaggerated_inverse = np.linalg.inv(exaggerated_matrix)
+        
+        # Combine with current IMU rotation (3x3 @ 3x3)
+        return current_rotation_3x3 @ exaggerated_inverse
+    
+    
     def render_widget(self, input_frame: Optional[np.ndarray] = None,
                      qw: float = 1.0, qx: float = 0.0, qy: float = 0.0, qz: float = 0.0,
                      predicted_rotation_matrix: Optional[np.ndarray] = None) -> np.ndarray:
@@ -217,7 +283,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         Args:
             input_frame: Input frame (ignored for fullscreen mode)
             qw, qx, qy, qz: Quaternion components for probe orientation
-            predicted_rotation_matrix: Optional predicted rotation (not used in this version)
+            predicted_rotation_matrix: Optional 3x3 predicted rotation correction matrix (raw prediction)
             
         Returns:
             np.ndarray: Rendered frame with 3D guidance widget
@@ -225,15 +291,40 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         if self.renderer is None:
             raise RuntimeError("Renderer not initialized")
         
-        # Convert quaternion to rotation matrix
+        # Convert quaternion to rotation matrix (returns 4x4)
         rotation_matrix = quaternion_to_matrix(qw, qx, qy, qz)
         
-        # Apply rotation to probe and axes
+        # Apply amplification to predicted rotation if provided (returns 3x3)
+        amplified_predicted_rotation = None
+        if predicted_rotation_matrix is not None:
+            amplified_predicted_rotation = self.amplify_rotation_prediction(
+                predicted_rotation_matrix, rotation_matrix)
+        
+        
+        # Apply rotation to probe and current axes (needs 4x4)
         if rotation_matrix is not None:
             self.renderer.set_pose("probe", rotation_matrix)
             self.renderer.set_pose("x_axis", rotation_matrix)
             self.renderer.set_pose("y_axis", rotation_matrix)
             self.renderer.set_pose("z_axis", rotation_matrix)
+        
+        # Apply amplified predicted rotation to predicted axes
+        if amplified_predicted_rotation is not None:
+            # Convert 3x3 rotation matrix to 4x4 transformation matrix
+            predicted_pose = np.eye(4)
+            predicted_pose[:3, :3] = amplified_predicted_rotation
+            
+            self.renderer.set_pose("predicted_x_axis", predicted_pose)
+            self.renderer.set_pose("predicted_y_axis", predicted_pose)
+            self.renderer.set_pose("predicted_z_axis", predicted_pose)
+        else:
+            # Hide predicted axes if no prediction available (move far away)
+            hidden_pose = np.eye(4)
+            hidden_pose[:3, 3] = [1000, 1000, 1000]  # Move off-screen
+            
+            self.renderer.set_pose("predicted_x_axis", hidden_pose)
+            self.renderer.set_pose("predicted_y_axis", hidden_pose)
+            self.renderer.set_pose("predicted_z_axis", hidden_pose)
         
         # Render the scene
         if self.wireframe:
