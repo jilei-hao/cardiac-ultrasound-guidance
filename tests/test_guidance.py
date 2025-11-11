@@ -297,9 +297,10 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
 
             cla, landmarks_tensor, rotation_prediction, pose_classification_prediction_rgb = guidance_pipeline.run_inference(orig_gray)
             
-            # Run LVEF
-            guidance_pipeline.run_lvef_async()
-            latest_lvef = guidance_pipeline.get_latest_lvef()
+            # Run LVEF once
+            if latest_lvef is None:
+                guidance_pipeline.run_lvef_async()
+                latest_lvef = guidance_pipeline.get_latest_lvef()
 
             # ---------------------------------------
             # Render ultrasound window
