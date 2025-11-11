@@ -9,8 +9,9 @@ import inference.landmark.landmark_prediction as lp
 # Import fourch_landmark pipeline
 from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
 import inference.pose_classification.pose_classification as pc
+from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 import ui.image_helpers as ih
-from ui.guidance_widget_renderer import GuidanceWidgetRenderer
+from ui.guidance_widget import create_guidance_widget_renderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
@@ -19,8 +20,21 @@ from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
 import requests
 from queue import Queue
-import data_access.clarius.clarius_streamer as ClariusStreamer
+from common.add_clarius_lib_path import setup_clarius_environment
 from data_access.screen_capture.screen_capture import ScreenCapture
+
+# Conditionally import ClariusStreamer
+try:
+    # Setup Clarius environment first
+    clarius_available, clarius_error = setup_clarius_environment()
+    if clarius_available:
+        import data_access.clarius.clarius_streamer as ClariusStreamer
+    else:
+        print(f"Warning: Clarius not available - {clarius_error}")
+        ClariusStreamer = None
+except Exception as e:
+    print(f"Warning: Failed to setup Clarius environment - {e}")
+    ClariusStreamer = None
 
 # define a queue
 classifier_queue = Queue()
@@ -30,6 +44,10 @@ def run_event_loop(options, config):
 
   # Check source and initialize 
   if options.source == 'clarius':
+    if ClariusStreamer is None:
+      print("❌ Error: Clarius SDK is not available. Cannot connect to Clarius probe.")
+      print("   Please ensure the Clarius SDK is properly installed.")
+      return
     print(f"🔌 Connecting to Clarius probe at {options.clarius_ip}:{options.clarius_port}...")
     ClariusStreamer.configure(options.clarius_ip, options.clarius_port, "research")
     ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
@@ -109,7 +127,8 @@ def run_event_loop(options, config):
       print("Keyboard Event: [b] pressed. Toggling border to ", app_settings.show_border)
     elif event.keysym == "d":  # Toggle debug info
       app_settings.print_debug_info = not app_settings.print_debug_info
-      ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
+      if ClariusStreamer is not None:
+        ClariusStreamer.set_print_debug_info(app_settings.print_debug_info)
       print("Keyboard Event: [d] pressed. Toggling debug info to ", app_settings.print_debug_info)
 
   # Bind key events to the root window
@@ -134,9 +153,15 @@ def run_event_loop(options, config):
         200: 12,  # Right Atrium (RA)
     }
   )
-  # landmark_model = None  
-  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=config["pose_classifier_weight_path"]) 
-  
+  # landmark_model = None
+  weight_path = ""
+  if options.imglmk:
+    weight_path = config["pose_classifier_imglmk_weight_path"]
+  else:
+    weight_path = config["pose_classifier_img_weight_path"]
+  classifier_model, preprocess = pc.load_pretrained_model(device, weight_path=weight_path, use_landmarks_for_estimation=options.imglmk)
+  classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
+
   # Initialize the LVEF predictor
   print("Initializing LVEF predictor...")
   lvef_predictor = LVEFPredictor(device, config["lvef_weight_path"])  
@@ -178,18 +203,25 @@ def run_event_loop(options, config):
   # Initialize probe renderer (loads probe once for efficiency)
   print("Initializing probe renderer...")
 
-  probe_renderer = GuidanceWidgetRenderer(
+  # Initialize probe renderer with automatic 3D/2D selection and fallback
+  probe_renderer = create_guidance_widget_renderer(
     probe_path=config["probe_mesh_path"],
+    renderer_type='auto',  # Try 3D first, fallback to 2D
+    fallback_to_2d=True,
+    # Common parameters (work for both 2D and 3D)
     background_color=(0, 0, 0),  # Black background
+    render_mode='fullscreen',
+    window_size=(256, 256),
+    # 2D-specific parameters (ignored by 3D renderer)
     predicted_axis_opacity=0.6,  # 60% opacity for predicted axes
-    axis_thickness=3,  # 
-    # axis_colors=((255, 100, 100), (100, 255, 100), (100, 100, 255)),  # Bright RGB colors
+    axis_thickness=3,
     axis_labels=('x', 'y', 'z'),  
     lod_level=0.1,  # Level of detail
     probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
     rotation_amplification=5.0,  # Amplification factor for rotation prediction
-    render_mode='fullscreen',  #
-    window_size=(256, 256)  # 
+    # 3D-specific parameters (ignored by 2D renderer)
+    scale_factor=2.0,
+    wireframe=False
   )
   
 
@@ -201,9 +233,7 @@ def run_event_loop(options, config):
   def run_lvef_prediction():
     nonlocal lvef_result
     nonlocal lvef_predictor
-    nonlocal frame_buffer
-    video = frame_buffer.get_all_frames()
-    result = lvef_predictor.run_prediction(video)
+    result = lvef_predictor.run_prediction()
 
     # with lvef_lock:
     lvef_result = result 
@@ -222,7 +252,11 @@ def run_event_loop(options, config):
       if options.source == 'screen':
         frame_data = screen_capture.get_frame()
       elif options.source == 'clarius':
-        frame_data = ClariusStreamer.get_frame()
+        if ClariusStreamer is not None:
+          frame_data = ClariusStreamer.get_frame()
+        else:
+          print("Error: ClariusStreamer is not available")
+          break
 
       if frame_data is None:
         continue
@@ -280,7 +314,7 @@ def run_event_loop(options, config):
         if app_settings.use_threshold_for_pose_classification:
           crnt_classifier_result = cla
         else:
-          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess)
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess, use_landmarks_for_estimation=options.imglmk)
           
       # push the classifier result to the queue
       classifier_queue.put(crnt_classifier_result)
@@ -315,12 +349,12 @@ def run_event_loop(options, config):
       # Convert crop_frame to RGB for frame buffer
       crop_frame_rgb = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2RGB)
       # add frame to the buffer (pipeline will handle resizing if needed)
-      frame_buffer.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
+      lvef_predictor.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
       # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
       # Start the LVEF prediction thread if not already running
-      if app_settings.run_lvef and frame_buffer.is_video_good():
+      if app_settings.run_lvef and lvef_predictor.is_buffer_video_good():
         # with lvef_lock:
           if lvef_thread is None or not lvef_thread.is_alive():
             lvef_thread = threading.Thread(target=run_lvef_prediction, daemon=True)
@@ -401,7 +435,7 @@ def run_event_loop(options, config):
 
   except KeyboardInterrupt:
     print("\n🛑 Capture stopped manually.")
-    if options.source == 'clarius':
+    if options.source == 'clarius' and ClariusStreamer is not None:
       ClariusStreamer.stop()
     else:
       screen_capture.stop()
@@ -421,16 +455,18 @@ def main():
   parser.add_argument('--save_folder', type=str, default="output", help='Folder to save images.')
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
   parser.add_argument('--upload_url', type=str, default="http://localhost:8000/upload", help='URL to upload the frame to.')
+  parser.add_argument('--imglmk', default=False, action='store_true', help='Use image + landmarks for pose classification.')
   options = parser.parse_args()
 
   config = {
-    "landmark_weight_path": "weights/landmark_prediction.pth",
-    "pose_classifier_weight_path": "weights/PostEst_256x256.pth",
-    "lvef_weight_path": "weights/echonet_r2plus1d_18_60_2_pretrained_best.pt",
+    "landmark_weight_path": "weights/landmark-prediction_v1.pth",
+    "pose_classifier_imglmk_weight_path": "weights/postest-imglmk-v1.pth",
+    "pose_classifier_img_weight_path": "weights/postest-img-v1.pth",
+    "lvef_weight_path": "weights/echonet_v1.pt",
     "rotation_config_path": "src/inference/rotation/config.json",
-    "rotation_checkpoint_path": "weights/rotation-prediction-251027.pt",
-    "probe_mesh_path": "src/ui/transducer.stl",
-    "fourch_landmark_weight_path": "weights/fourch_landmark_prediction.pt"
+    "rotation_checkpoint_path": "weights/rotation-prediction_v1.pt",
+    "probe_mesh_path": "assets/transducer.stl",
+    "fourch_landmark_weight_path": "weights/4ch-seg_v1.pt"
   }
 
   run_event_loop(options, config)

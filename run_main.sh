@@ -2,7 +2,7 @@
 
 server_ip=141.212.114.250
 
-source initialize_envs.sh
+# source initialize_envs.sh
 
 # python3 src/main.py \
 #   --source clarius \
@@ -15,5 +15,6 @@ source initialize_envs.sh
 python3 src/main.py \
   --window_title "Input" \
   --upload_url http://$server_ip:8000/upload \
-  --guidance_window
+  --guidance_window \
+  --imglmk
 # --save --save_folder /path/to/output/folder

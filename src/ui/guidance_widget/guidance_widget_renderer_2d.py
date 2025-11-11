@@ -2,7 +2,8 @@ import numpy as np
 import cv2
 import math
 from scipy.spatial.transform import Rotation as R
-from .mesh_helper import load_stl_vertices
+from ..mesh_helper import load_stl_vertices
+from .guidance_widget_renderer import GuidanceWidgetRenderer
 
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """Convert quaternion to 3x3 rotation matrix"""
@@ -17,7 +18,7 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     ], dtype=float)
     return R
 
-class GuidanceWidgetRenderer:
+class GuidanceWidgetRenderer2D(GuidanceWidgetRenderer):
     """Probe and axis renderer with configurable parameters."""
     
     def __init__(self, probe_path, 
@@ -30,8 +31,12 @@ class GuidanceWidgetRenderer:
                  probe_scale=0.7, #probe size relative to axes, 0-1
                  rotation_amplification=3.0,  # Amplification factor for rotation prediction
                  render_mode='fullscreen',
-                 window_size=(512, 512)):
-        self.probe_path = probe_path
+                 window_size=(512, 512),
+                 **kwargs):
+        # Initialize parent class
+        super().__init__(probe_path, **kwargs)
+        
+        # Store 2D-specific parameters
         self.background_color = background_color
         self.predicted_axis_opacity = predicted_axis_opacity
         self.axis_thickness = axis_thickness
@@ -110,7 +115,7 @@ class GuidanceWidgetRenderer:
         # Combine with current IMU rotation
         return current_imu_rotation @ exaggerated_inverse
 
-    def render_widget(self, input_frame, qw=1.0, qx=0.0, qy=0.0, qz=0.0, predicted_rotation_matrix=None):
+    def render_widget(self, input_frame: np.ndarray = None, qw=1.0, qx=0.0, qy=0.0, qz=0.0, predicted_rotation_matrix=None):
         """Main rendering method - renders widget on input frame"""
         # Apply amplification to predicted rotation if provided
         amplified_predicted_rotation = None
@@ -267,6 +272,21 @@ class GuidanceWidgetRenderer:
             ey = int(y1 + end * dy)
             cv2.line(img, (sx, sy), (ex, ey), color, thickness)
             current += dash_length + gap_length
+    
+    def set_render_mode(self, mode: str):
+        """Set the rendering mode."""
+        if mode in ['fullscreen', 'overlay']:
+            self.render_mode = mode
+        else:
+            raise ValueError(f"Invalid render mode: {mode}")
+    
+    def get_render_mode(self) -> str:
+        """Get the current rendering mode."""
+        return self.render_mode
+    
+    def destroy(self):
+        """Clean up resources (2D renderer doesn't need special cleanup)."""
+        pass
 
     def _draw_probe_model_with_params(self, input_frame, R, position, size):
         """Draw probe model with parameters"""

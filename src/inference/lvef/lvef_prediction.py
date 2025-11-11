@@ -2,6 +2,7 @@ import torchvision
 import torch.nn as nn
 import torch
 import numpy as np
+from common.frame_buffer import FrameBuffer
 
 class LVEFPredictor:
     """
@@ -20,7 +21,8 @@ class LVEFPredictor:
         self.model.fc.bias.data[0] = 55.6 # this is from echonet/utils/video.py
         # send model to device
         self.model = self.model.to(device)
-        
+        self._frame_buffer = FrameBuffer(buffer_size=100)
+
         # load model weights
         if weight_path is None:
             raise ValueError("[lvef_prediction] weight_path cannot be None")
@@ -31,7 +33,8 @@ class LVEFPredictor:
             new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['state_dict'].items()}
             self.model.load_state_dict(new_state_dict)
             
-    def get_mean_and_std(self, video_matrix):
+
+    def _get_mean_and_std(self, video_matrix):
         """
         video_matrix is a 4D array, shaped (N, W, D, 3), 
         N is the number of frames, W is the width, D is the depth, 3 is the RGB channels
@@ -49,7 +52,27 @@ class LVEFPredictor:
         std = np.sqrt(s2 / n - mean**2).astype(np.float32)
         return mean, std
     
-    def run_prediction(self, video_matrix):
+    
+    def add_frame_to_buffer(self, frame, pose_classification_result):
+        """
+        Add a frame to the internal frame buffer.
+        Args:
+            frame (np.ndarray): A single video frame (H, W, 3).
+            pose_classification_result: The pose classification result associated with the frame.
+        """
+        self._frame_buffer.add_frame(frame, pose_classification_result)
+
+
+    def is_buffer_video_good(self): 
+        """
+        Check if the current video in the buffer is good for prediction.
+        Returns:
+            bool: True if the video is good, False otherwise.
+        """
+        return self._frame_buffer.is_video_good() # this should not be in frame buffer
+
+    
+    def run_prediction(self):
         """
         Run LVEF prediction on a video matrix.
         Args:
@@ -57,8 +80,10 @@ class LVEFPredictor:
         Returns:
             float: The predicted LVEF value.
         """
+        video_matrix = self._frame_buffer.get_all_frames()
+
         # get mean and std
-        mean, std = self.get_mean_and_std(video_matrix)
+        mean, std = self._get_mean_and_std(video_matrix)
         # normalize video matrix
         x = torch.from_numpy(video_matrix).float()
         x = (x - mean) / std
@@ -70,5 +95,9 @@ class LVEFPredictor:
         with torch.no_grad():
             y = self.model(x)
         y = y.squeeze().cpu().numpy()
-        print("LVEF: ", y.round(2))
-        return y
+        # print("LVEF: ", y.round(2))
+
+        # only preserve integer part
+        lvef = int(y)
+
+        return lvef

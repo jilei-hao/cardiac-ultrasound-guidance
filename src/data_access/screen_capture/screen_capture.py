@@ -1,9 +1,10 @@
 import mss
 import data_access.screen_capture.macos_window_helpers as mwh
 from data_access.frame_data import FrameData
+from data_access.frame_data_input import FrameDataInput
 import time
 
-class ScreenCapture:
+class ScreenCapture(FrameDataInput):
   def __init__(self, window_title, app_settings):
     self.window_title = window_title
     self.app_settings = app_settings
