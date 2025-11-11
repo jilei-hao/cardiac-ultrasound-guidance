@@ -233,9 +233,7 @@ def run_event_loop(options, config):
   def run_lvef_prediction():
     nonlocal lvef_result
     nonlocal lvef_predictor
-    nonlocal frame_buffer
-    video = frame_buffer.get_all_frames()
-    result = lvef_predictor.run_prediction(video)
+    result = lvef_predictor.run_prediction()
 
     # with lvef_lock:
     lvef_result = result 
@@ -351,12 +349,12 @@ def run_event_loop(options, config):
       # Convert crop_frame to RGB for frame buffer
       crop_frame_rgb = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2RGB)
       # add frame to the buffer (pipeline will handle resizing if needed)
-      frame_buffer.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
+      lvef_predictor.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
       # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
       # Start the LVEF prediction thread if not already running
-      if app_settings.run_lvef and frame_buffer.is_video_good():
+      if app_settings.run_lvef and lvef_predictor.is_buffer_video_good():
         # with lvef_lock:
           if lvef_thread is None or not lvef_thread.is_alive():
             lvef_thread = threading.Thread(target=run_lvef_prediction, daemon=True)

@@ -296,6 +296,10 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                 orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2RGB)  # Convert to RGB for display
 
             cla, landmarks_tensor, rotation_prediction, pose_classification_prediction_rgb = guidance_pipeline.run_inference(orig_gray)
+            
+            # Run LVEF
+            guidance_pipeline.run_lvef_async()
+            latest_lvef = guidance_pipeline.get_latest_lvef()
 
             # ---------------------------------------
             # Render ultrasound window
@@ -309,6 +313,8 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
 
             result_frame = ih.add_rgb_border_to_result(result_frame, pose_classification_prediction_rgb)
 
+            if latest_lvef is not None:
+                ih.draw_text_on_frame(result_frame, "LVEF: " + str(round(latest_lvef.item())) + "%")
             # --------------------------------------
             # Render guidance window (unified interface)
             # --------------------------------------
