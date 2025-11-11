@@ -71,32 +71,35 @@ class LinuxImageWindow(AbstractImageWindow):
             self.window_name = None
         
         self.is_initialized = False
-    
-    def display_frame(self, frame: np.ndarray) -> bool:
+
+    def display_frame_rgb(self, frame_rgb: np.ndarray) -> bool:
         """
         Display a frame in the window.
         
         Args:
-            frame: NumPy array representing the image (BGR or RGB format)
+            frame_rgb: NumPy array representing the image in RGB format
             
         Returns:
             bool: True if display successful
         """
         if not self.is_initialized or self.window_name is None:
             return False
-            
+
+        # Convert RGB to BGR for OpenCV
+        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+
         try:
             # Get current window size
             current_width, current_height = self.get_window_size()
             
             # Resize frame to fit window (maintain aspect ratio)
-            frame_height, frame_width = frame.shape[:2]
+            frame_height, frame_width = frame_bgr.shape[:2]
             
             # Calculate the minimum dimension to maintain square aspect ratio
             display_size = min(current_width, current_height)
             
             # Resize the frame
-            resized_frame = cv2.resize(frame, (display_size, display_size), 
+            resized_frame = cv2.resize(frame_bgr, (display_size, display_size), 
                                      interpolation=cv2.INTER_AREA)
             
             # Convert RGB to BGR if necessary (OpenCV uses BGR by default)

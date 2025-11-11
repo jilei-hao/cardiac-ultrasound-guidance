@@ -12,7 +12,7 @@ import inference.pose_classification.pose_classification as pc
 from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 import ui.image_helpers as ih
 from ui.guidance_widget import create_guidance_widget_renderer
-from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
+from src.ui.four_chamber_landmark.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
 from common.frame_buffer import FrameBuffer

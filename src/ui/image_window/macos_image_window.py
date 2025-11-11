@@ -77,8 +77,8 @@ class MacOSImageWindow(AbstractImageWindow):
             self.root = None
             self.label = None
         self.is_initialized = False
-    
-    def display_frame(self, frame: np.ndarray) -> bool:
+
+    def display_frame_rgb(self, frame_rgb: np.ndarray) -> bool:
         """
         Display a frame in the window.
         """
@@ -88,16 +88,16 @@ class MacOSImageWindow(AbstractImageWindow):
         # Ensure UI updates occur on the Tk main thread
         if threading.current_thread() is not threading.main_thread():
             # Make a shallow copy to avoid race conditions on the array
-            fcopy = frame.copy()
+            fcopy = frame_rgb.copy()
             try:
                 self.root.after(0, lambda: self._display_frame_on_ui(fcopy))
                 return True
             except tk.TclError:
                 return False
         else:
-            return self._display_frame_on_ui(frame)
+            return self._display_frame_on_ui(frame_rgb)
 
-    def _display_frame_on_ui(self, frame: np.ndarray) -> bool:
+    def _display_frame_on_ui(self, frame_rgb: np.ndarray) -> bool:
         """
         Internal: perform the actual image conversion and widget update on the UI thread.
         """
@@ -109,21 +109,21 @@ class MacOSImageWindow(AbstractImageWindow):
             current_width, current_height = self.get_window_size()
 
             # Resize frame to fit window (maintain aspect ratio via square min side)
-            frame_height, frame_width = frame.shape[:2]
+            frame_height, frame_width = frame_rgb.shape[:2]
             display_size = min(current_width, current_height)
             display_size = max(1, display_size)  # guard against 0
 
             if HAS_CV2:
-                resized_frame = cv2.resize(frame, (display_size, display_size), interpolation=cv2.INTER_AREA)
+                resized_frame = cv2.resize(frame_rgb, (display_size, display_size), interpolation=cv2.INTER_AREA)
                 if len(resized_frame.shape) == 3 and resized_frame.shape[2] == 3:
                     display_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
                 else:
                     display_frame = resized_frame
             else:
-                if len(frame.shape) == 3:
-                    pil_img = Image.fromarray(frame)
+                if len(frame_rgb.shape) == 3:
+                    pil_img = Image.fromarray(frame_rgb)
                 else:
-                    pil_img = Image.fromarray(frame, mode='L')
+                    pil_img = Image.fromarray(frame_rgb, mode='L')
                 pil_img = pil_img.resize((display_size, display_size), Image.Resampling.LANCZOS)
                 display_frame = np.array(pil_img)
 

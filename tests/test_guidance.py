@@ -247,7 +247,8 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
         min_opacity=0.6,
         max_opacity=1.0,
         uncertainty_threshold=6.0,
-        reference_size=None  # Landmarks are already in crop_frame coordinates
+        reference_size=None,  # Landmarks are already in crop_frame coordinates
+        color_legend_png_path=os.getenv("LANDMARK_COLOR_LEGEND_PNG_PATH")
     )
     
     try:
@@ -323,7 +324,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                 orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
                 orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2RGB)  # Convert to RGB for display
 
-            cla, landmarks_tensor, rotation_prediction, pose_classification_prediction = inference_runner.run_inference(orig_gray)
+            cla, landmarks_tensor, rotation_prediction, pose_classification_prediction_rgb = inference_runner.run_inference(orig_gray)
 
             # ---------------------------------------
             # Render ultrasound window
@@ -334,7 +335,8 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                 landmarks_tensor,
                 reference_size=None
             )
-            result_frame = ih.add_rgb_border_to_result(result_frame, pose_classification_prediction)
+
+            result_frame = ih.add_rgb_border_to_result(result_frame, pose_classification_prediction_rgb)
 
             # --------------------------------------
             # Render guidance window (unified interface)
@@ -379,11 +381,11 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
             guidance_frame = guidance_img.copy()
 
             # Display frames in both windows
-            if not main_window.display_frame(main_frame):
+            if not main_window.display_frame_rgb(main_frame):
                 print("❌ Failed to display main frame")
                 break
-                
-            if not guidance_window.display_frame(guidance_frame):
+
+            if not guidance_window.display_frame_rgb(guidance_frame):
                 print("❌ Failed to display guidance frame")
                 break
             

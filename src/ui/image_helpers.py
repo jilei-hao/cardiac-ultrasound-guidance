@@ -20,7 +20,8 @@ def add_rgb_circle_to_result(input_frame, rgb):
 
 def add_rgb_border_to_result(input_frame, rgb):
     width = 40
-    return draw_border_around_image(input_frame, width, rgb)
+    bgr = rgb_to_bgr(rgb)
+    return draw_border_around_image(input_frame, width, bgr)
 
 def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6, reference_size=112):
     """
@@ -41,7 +42,7 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
     
     if has_labels:
         # Use FourChamberLandmarkRenderer for 4-chamber landmarks
-        from .fourch_landmark_renderer import FourChamberLandmarkRenderer
+        from .four_chamber_landmark.fourch_landmark_renderer import FourChamberLandmarkRenderer
         
         renderer = FourChamberLandmarkRenderer(
             landmark_radius=app_settings.landmark_radius,
@@ -97,6 +98,45 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
                 vis_frame[y1:y2, x1:x2] = region_blended
     
     return vis_frame
+
+def overlay_color_legend(input_frame, legend_bgra, top=10, left=10, pct_width=0.2, margin=20):
+    """Overlay a BGRA color legend onto the input frame at specified position."""
+    h, w = input_frame.shape[:2]
+    lh, lw = legend_bgra.shape[:2]
+
+    # resample the legend to fit the specified percentage of the input frame
+    new_lw = int(w * pct_width)
+    # compute new lh to maintain aspect ratio
+    aspect_ratio = lw / lh
+    new_lh = int(new_lw / aspect_ratio)
+    legend_resampled = cv2.resize(legend_bgra, (new_lw, new_lh), interpolation=cv2.INTER_AREA)
+    legend_bgra = legend_resampled
+    lh, lw = legend_bgra.shape[:2]
+    
+    # Calculate position
+    y1 = top + margin
+    x1 = left + margin
+    y2 = min(h, y1 + lh)
+    x2 = min(w, x1 + lw)
+    
+    # Adjust legend size if it exceeds frame boundaries
+    legend_crop = legend_bgra[0:(y2 - y1), 0:(x2 - x1)]
+    
+    # Split legend into BGR and Alpha channels
+    legend_bgr = legend_crop[:, :, :3]
+    alpha_mask = legend_crop[:, :, 3] / 255.0  # Normalize alpha to [0, 1]
+    
+
+    # Overlay legend onto input frame
+    for c in range(3):  # For B, G, R channels
+        input_frame[y1:y2, x1:x2, c] = (
+            alpha_mask * legend_bgr[:, :, c] +
+            (1 - alpha_mask) * input_frame[y1:y2, x1:x2, c]
+        ).astype(np.uint8)
+
+    return input_frame
+
+
 
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """Convert quaternion to 3x3 rotation matrix"""

@@ -14,6 +14,7 @@ torchvision
 # Rendering
 pyrender
 trimesh
+cairosvg
 
 # Utilities
 requests

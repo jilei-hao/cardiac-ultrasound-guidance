@@ -55,12 +55,12 @@ class AbstractImageWindow(ABC):
         pass
     
     @abstractmethod
-    def display_frame(self, frame: np.ndarray) -> bool:
+    def display_frame_rgb(self, frame_rgb: np.ndarray) -> bool:
         """
         Display a frame in the window.
         
         Args:
-            frame: NumPy array representing the image (BGR or RGB format)
+            frame_rgb: NumPy array representing the image in RGB format
             
         Returns:
             bool: True if display successful, False otherwise

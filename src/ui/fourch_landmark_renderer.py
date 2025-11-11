@@ -6,6 +6,7 @@ Configurable class for rendering 4-chamber landmarks with connecting lines.
 import numpy as np
 import cv2
 from typing import Dict, Tuple, Optional, List
+from ui.image_helpers import overlay_color_legend
 
 
 class FourChamberLandmarkRenderer:
@@ -29,7 +30,8 @@ class FourChamberLandmarkRenderer:
         line_thickness_ratio: float = 0.5,
         color_map: Optional[Dict[int, Tuple[int, int, int]]] = None,
         landmarks_per_chamber: Optional[Dict[int, int]] = None,
-        reference_size: Optional[int] = None
+        reference_size: Optional[int] = None, 
+        color_legend_png_path: Optional[str] = None
     ):
         """
         Initialize the 4-chamber landmark renderer.
@@ -53,14 +55,15 @@ class FourChamberLandmarkRenderer:
         self.line_thickness_ratio = line_thickness_ratio
         self.line_thickness = max(1, int(landmark_radius * line_thickness_ratio))
         self.reference_size = reference_size
+        self.color_legend_bgra = None  # Cached legend image
         
         # Default color map (BGR format for OpenCV)
         if color_map is None:
             self.color_map = {
-                50: (255, 100, 180),      # Left Ventricle (LV) - Bright Pink/Magenta
-                100: (200, 200, 50),      # Right Ventricle (RV) - Bright Yellow
-                150: (100, 255, 150),     # Left Atrium (LA) - Bright Green
-                200: (255, 150, 100),     # Right Atrium (RA) - Bright Orange
+                50: (180, 100, 255),      # Left Ventricle (LV) - Bright Pink/Magenta
+                100: (50, 200, 200),      # Right Ventricle (RV) - Bright Yellow
+                150: (150, 255, 100),     # Left Atrium (LA) - Bright Green
+                200: (100, 255, 150),     # Right Atrium (RA) - Bright Orange
             }
         else:
             self.color_map = color_map
@@ -75,6 +78,16 @@ class FourChamberLandmarkRenderer:
             }
         else:
             self.landmarks_per_chamber = landmarks_per_chamber
+
+
+        # Read legend png and cache bgra image if path provided
+        if color_legend_png_path is not None:
+            legend_bgra = cv2.imread(color_legend_png_path, cv2.IMREAD_UNCHANGED)
+
+            if legend_bgra is not None:
+                self.color_legend_bgra = legend_bgra
+            else:
+                print(f"Warning: Could not read color legend PNG from {color_legend_png_path}")
     
     def get_color_for_chamber(self, label: int) -> Tuple[int, int, int]:
         """Get color for a chamber based on label value (BGR format for OpenCV)."""
@@ -93,6 +106,15 @@ class FourChamberLandmarkRenderer:
         # Invert: lower uncertainty = higher opacity
         opacity = self.min_opacity + (self.max_opacity - self.min_opacity) * (1.0 - uncertainty)
         return float(np.clip(opacity, self.min_opacity, self.max_opacity))
+    
+
+    def _overlay_color_legend(self, input_frame):
+        # Overlay the color legend on the input frame (top-left corner)
+        if self.color_legend_bgra is None:
+            return input_frame
+        
+        overlay_color_legend(input_frame, self.color_legend_bgra, top=10, left=10, pct_width=0.25, margin=20)
+        return input_frame
     
     def overlay_landmarks(
         self,
@@ -199,6 +221,9 @@ class FourChamberLandmarkRenderer:
                 # Blend this region with calculated opacity
                 region_blended = cv2.addWeighted(region_overlay, opacity, region_original, 1.0 - opacity, 0)
                 vis_frame[y1:y2, x1:x2] = region_blended
+
+        # Overlay color legend if available
+        vis_frame = self._overlay_color_legend(vis_frame)
         
         return vis_frame
     
