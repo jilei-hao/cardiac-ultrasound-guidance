@@ -227,6 +227,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
             simulator.start()
         
         frame_count = 0
+        latest_lvef = None
         print("\nStarting display loop...")
         
         while main_window.is_window_active() and guidance_window.is_window_active():
