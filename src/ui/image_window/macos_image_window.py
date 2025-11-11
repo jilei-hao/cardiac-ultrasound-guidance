@@ -3,6 +3,7 @@ from tkinter import Label
 from PIL import Image, ImageTk
 import numpy as np
 from typing import Tuple
+import threading  # NEW
 from .abstract_image_window import AbstractImageWindow
 
 # Optional cv2 import for advanced image processing
@@ -66,9 +67,13 @@ class MacOSImageWindow(AbstractImageWindow):
         """
         if self.root is not None:
             try:
+                # Drop image refs before destroying root
+                if self.label is not None:
+                    self.label.image = None
+                self.current_image = None
                 self.root.destroy()
             except:
-                pass  # Window may already be destroyed
+                pass
             self.root = None
             self.label = None
         self.is_initialized = False
@@ -76,63 +81,65 @@ class MacOSImageWindow(AbstractImageWindow):
     def display_frame(self, frame: np.ndarray) -> bool:
         """
         Display a frame in the window.
-        
-        Args:
-            frame: NumPy array representing the image (BGR or RGB format)
-            
-        Returns:
-            bool: True if display successful
         """
-        if not self.is_initialized or self.label is None:
+        if not self.is_initialized or self.label is None or self.root is None:
             return False
-            
+
+        # Ensure UI updates occur on the Tk main thread
+        if threading.current_thread() is not threading.main_thread():
+            # Make a shallow copy to avoid race conditions on the array
+            fcopy = frame.copy()
+            try:
+                self.root.after(0, lambda: self._display_frame_on_ui(fcopy))
+                return True
+            except tk.TclError:
+                return False
+        else:
+            return self._display_frame_on_ui(frame)
+
+    def _display_frame_on_ui(self, frame: np.ndarray) -> bool:
+        """
+        Internal: perform the actual image conversion and widget update on the UI thread.
+        """
+        if not self.is_initialized or self.label is None or self.root is None:
+            return False
+
         try:
             # Get current window dimensions
             current_width, current_height = self.get_window_size()
-            
-            # Resize frame to fit window (maintain aspect ratio)
+
+            # Resize frame to fit window (maintain aspect ratio via square min side)
             frame_height, frame_width = frame.shape[:2]
-            
-            # Calculate the minimum dimension to maintain square aspect ratio
             display_size = min(current_width, current_height)
-            
-            # Resize the frame using PIL or cv2 if available
+            display_size = max(1, display_size)  # guard against 0
+
             if HAS_CV2:
-                # Use OpenCV for resizing if available
-                resized_frame = cv2.resize(frame, (display_size, display_size), 
-                                         interpolation=cv2.INTER_AREA)
-                
-                # Convert BGR to RGB if necessary (OpenCV uses BGR by default)
+                resized_frame = cv2.resize(frame, (display_size, display_size), interpolation=cv2.INTER_AREA)
                 if len(resized_frame.shape) == 3 and resized_frame.shape[2] == 3:
-                    # Check if it's BGR format (common with OpenCV)
-                    # Convert to RGB for PIL/Tkinter
                     display_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
                 else:
                     display_frame = resized_frame
             else:
-                # Use PIL for resizing when OpenCV is not available
                 if len(frame.shape) == 3:
-                    # Color image
                     pil_img = Image.fromarray(frame)
                 else:
-                    # Grayscale image
                     pil_img = Image.fromarray(frame, mode='L')
-                
-                # Resize using PIL
                 pil_img = pil_img.resize((display_size, display_size), Image.Resampling.LANCZOS)
                 display_frame = np.array(pil_img)
-            
-            # Convert to PIL Image
+
+            # Convert to PIL Image, then ImageTk PhotoImage bound to this window's root
             img = Image.fromarray(display_frame)
-            img_tk = ImageTk.PhotoImage(img)
-            
+            img_tk = ImageTk.PhotoImage(img, master=self.root)  # IMPORTANT: bind to the correct Tk instance
+
             # Update the label
             self.label.config(image=img_tk)
-            self.label.image = img_tk  # Keep a reference to prevent garbage collection
-            
+            self.label.image = img_tk        # keep strong reference
             self.current_image = img_tk
             return True
-            
+
+        except tk.TclError:
+            # Root may be closed or image context invalid
+            return False
         except Exception as e:
             print(f"Failed to display frame: {e}")
             return False

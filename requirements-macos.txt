@@ -19,9 +19,9 @@ pyrender
 trimesh
 
 # macOS window management (required for screen capture helpers)
-pyobjc
-pyobjc-framework-Quartz
-pyobjc-framework-AppKit
-
+# Use the meta package; it pulls AppKit via Cocoa. Guard so non-mac installs don’t fail.
+pyobjc==10.3 ; sys_platform == "darwin"
+# If you specifically need Quartz, keep this (optional if the meta package is used)
+pyobjc-framework-Quartz ; sys_platform == "darwin"
 
 python-dotenv>=1.0.0  # Environment variable management
