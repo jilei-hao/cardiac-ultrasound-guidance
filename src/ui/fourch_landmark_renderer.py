@@ -58,13 +58,12 @@ class FourChamberLandmarkRenderer:
         self.color_legend_bgra = None  # Cached legend image
         
         # Default color map (BGR format for OpenCV)
-        # Original RGB colors: LV=(255,100,180), RV=(200,200,50), LA=(100,255,150), RA=(255,150,100)
         if color_map is None:
             self.color_map = {
-                50: (180, 100, 255),      # Left Ventricle (LV) - Bright Pink/Magenta (RGB: 255,100,180)
-                100: (50, 200, 200),      # Right Ventricle (RV) - Bright Yellow (RGB: 200,200,50)
-                150: (150, 255, 100),     # Left Atrium (LA) - Bright Green (RGB: 100,255,150)
-                200: (100, 150, 255),     # Right Atrium (RA) - Bright Orange (RGB: 255,150,100)
+                50: (180, 100, 255),      # Left Ventricle (LV) - Bright Pink/Magenta
+                100: (50, 200, 200),      # Right Ventricle (RV) - Bright Yellow
+                150: (150, 255, 100),     # Left Atrium (LA) - Bright Green
+                200: (100, 150, 255),     # Right Atrium (RA) - Bright Orange
             }
         else:
             self.color_map = color_map
@@ -114,7 +113,9 @@ class FourChamberLandmarkRenderer:
         if self.color_legend_bgra is None:
             return input_frame
         
-        overlay_color_legend(input_frame, self.color_legend_bgra, top=10, left=10, pct_width=0.2, margin=20)
+        # Reverse RGB/BGR for PNG visualization (swap R and B channels)
+        legend_bgra_swapped = self.color_legend_bgra[:, :, [2, 1, 0, 3]] if self.color_legend_bgra.shape[2] == 4 else self.color_legend_bgra[:, :, [2, 1, 0]]
+        overlay_color_legend(input_frame, legend_bgra_swapped, top=10, left=10, pct_width=0.2, margin=20)
         return input_frame
     
     def overlay_landmarks(

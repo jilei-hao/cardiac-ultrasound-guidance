@@ -198,13 +198,14 @@ def run_event_loop(options, config):
     min_opacity=0.6,
     max_opacity=1.0,
     uncertainty_threshold=6.0,
-    reference_size=None,
+    reference_size=None,  # Landmarks are already in crop_frame coordinates
     color_map={
             50: ih.rgb_to_bgr((180, 100, 255)),      # Left Ventricle (LV) - Bright Pink/Magenta (RGB: 255,100,180)
             100: ih.rgb_to_bgr((50, 200, 200)),      # Right Ventricle (RV) - Bright Yellow (RGB: 200,200,50)
             150: ih.rgb_to_bgr((150, 255, 100)),     # Left Atrium (LA) - Bright Green (RGB: 100,255,150)
             200: ih.rgb_to_bgr((100, 150, 255)),     # Right Atrium (RA) - Bright Orange (RGB: 255,150,100)
-    }# Landmarks are already in crop_frame coordinates
+    },
+    color_legend_png_path="assets/4ch-legend_static_v1.png"  # Overlay legend in top-left corner
   )
 
   # Initialize probe renderer (loads probe once for efficiency)
