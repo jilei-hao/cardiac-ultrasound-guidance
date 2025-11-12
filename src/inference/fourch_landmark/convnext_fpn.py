@@ -50,10 +50,12 @@ class HubConvNeXtFeatures(nn.Module):
     Wrap a ConvNeXt (loaded via torch.hub from local DINOv3 repo) to return
     [C2, C3, C4, C5] feature maps like timm(features_only=True).
     """
-    def __init__(self, weights: str | None = None):
+    def __init__(self, weights: str | None = None, dinov3_repo_dir: str | None = None):
         super().__init__()
         # Local DINOv3 repo path
-        repo_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "dinov3")
+        if dinov3_repo_dir is None:
+            print("Using default DINOv3 repo path.")
+            repo_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "dinov3")
         entry = "dinov3_convnext_base"
         
         assert os.path.isdir(repo_dir), f"repo_dir does not exist: {repo_dir}"
@@ -152,13 +154,13 @@ class HubConvNeXtFeatures(nn.Module):
 # Main model (hub backbone + FPN)
 # -------------------------
 class ConvNeXtFPN(nn.Module):
-    def __init__(self, num_classes=5, hub_weights=None):
+    def __init__(self, num_classes=5, hub_weights=None, dinov3_repo_dir: str | None = None):
         """
         Load ConvNeXt from local DINOv3 repo via torch.hub.
         """
         super().__init__()
 
-        self.backbone = HubConvNeXtFeatures(weights=hub_weights)
+        self.backbone = HubConvNeXtFeatures(weights=hub_weights, dinov3_repo_dir=dinov3_repo_dir)
         print("hub loaded")
 
         in_chs = self.backbone.feature_info.channels()
