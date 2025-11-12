@@ -15,7 +15,7 @@ from ui.guidance_widget import create_guidance_widget_renderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
-from src.inference.lvef.frame_buffer import FrameBuffer
+from inference.lvef.frame_buffer import FrameBuffer
 from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
 import requests
@@ -460,13 +460,13 @@ def main():
 
   config = {
     "landmark_weight_path": "weights/landmark-prediction_v1.pth",
-    "pose_classifier_imglmk_weight_path": "weights/postest-imglmk-v1.pth",
-    "pose_classifier_img_weight_path": "weights/postest-img-v1.pth",
+    "pose_classifier_imglmk_weight_path": "weights/pose-est-imglmk_v1.pth",
+    "pose_classifier_img_weight_path": "weights/pose-est-img_v1.pth",
     "lvef_weight_path": "weights/echonet_v1.pt",
     "rotation_config_path": "src/inference/rotation/config.json",
     "rotation_checkpoint_path": "weights/rotation-prediction_v1.pt",
     "probe_mesh_path": "assets/transducer.stl",
-    "fourch_landmark_weight_path": "weights/4ch-seg_v1.pt"
+    "fourch_landmark_weight_path": "weights/4ch-seg_v2.pt"
   }
 
   run_event_loop(options, config)

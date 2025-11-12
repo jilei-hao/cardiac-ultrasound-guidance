@@ -12,15 +12,15 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
-import inference.inference_helper as ihp
-from inference.fourch_landmark.fourch_landmark_pipeline import (
+import inference_helper as ihp
+from fourch_landmark.fourch_landmark_pipeline import (
     configure_fourch_landmark_pipeline,
     run_fourch_core_prediction
 )
-from inference.rotation.rotation_predictor import create_rotation_predictor
-from inference.pose_classification import pose_classification
-from inference.pose_classification.pose_classification import PoseClassifierResultPooler
-from inference.lvef.lvef_prediction import LVEFPredictor
+from rotation.rotation_predictor import create_rotation_predictor
+from pose_classification import pose_classification
+from pose_classification.pose_classification import PoseClassifierResultPooler
+from lvef.lvef_prediction import LVEFPredictor
 
 @dataclass
 class GuidancePipelineConfig:
