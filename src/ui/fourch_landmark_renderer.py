@@ -5,8 +5,8 @@ Configurable class for rendering 4-chamber landmarks with connecting lines.
 
 import numpy as np
 import cv2
-from typing import Dict, Tuple, Optional, List
-from ui.image_helpers import overlay_color_legend
+from typing import Dict, Tuple, Optional
+from .image_helpers import overlay_color_legend
 
 
 class FourChamberLandmarkRenderer:

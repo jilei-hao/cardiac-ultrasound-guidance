@@ -2,7 +2,7 @@ import torchvision
 import torch.nn as nn
 import torch
 import numpy as np
-from common.frame_buffer import FrameBuffer
+from .frame_buffer import FrameBuffer
 
 class LVEFPredictor:
     """
