@@ -147,11 +147,12 @@ def run_event_loop(options, config):
     weight_path=config["fourch_landmark_weight_path"],
     device=device,
     landmarks_per_chamber={
-        50: 12,   # Left Ventricle (LV)
+        50: 24,   # Left Ventricle (LV)
         100: 12,  # Right Ventricle (RV)
         150: 12,  # Left Atrium (LA)
         200: 12,  # Right Atrium (RA)
     }
+
   )
   # landmark_model = None
   weight_path = ""
@@ -349,7 +350,8 @@ def run_event_loop(options, config):
       # Convert crop_frame to RGB for frame buffer
       crop_frame_rgb = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2RGB)
       # add frame to the buffer (pipeline will handle resizing if needed)
-      lvef_predictor.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
+      # lvef_predictor.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
+      lvef_predictor.add_frame_to_buffer(crop_frame_rgb, crnt_classifier_result_pooled)
       # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
