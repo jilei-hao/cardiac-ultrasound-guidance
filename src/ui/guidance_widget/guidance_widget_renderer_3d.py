@@ -8,7 +8,7 @@ import numpy as np
 import trimesh
 import time
 from scipy.spatial.transform import Rotation as R
-from typing import Optional, Tuple
+from typing import Optional
 
 from .guidance_widget_renderer import GuidanceWidgetRenderer
 from ..generic_3d_renderer import (
@@ -17,7 +17,6 @@ from ..generic_3d_renderer import (
     create_rotation_matrix,
     quaternion_to_matrix
 )
-from ..image_window.window_factory import create_image_window
 
 
 class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
@@ -75,7 +74,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 width=self.window_size[0],
                 height=self.window_size[1],
                 background_color=self.background_color,
-                ambient_light=np.array([0.2, 0.2, 0.2])  # Lower ambient for better contrast
+                ambient_light=np.array([0.3, 0.3, 0.3])  # Lower ambient for better contrast
             )
             
             if not self.renderer.initialize(camera_fov=np.pi / 4):
@@ -165,8 +164,8 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.materials = {
             'probe': pyrender.MetallicRoughnessMaterial(
                 baseColorFactor=[0.98, 0.98, 0.98, 1.0],  # White plastic
-                metallicFactor=0.1,
-                roughnessFactor=0.7
+                metallicFactor=0.5,
+                roughnessFactor=0.5
             ),
             'x': pyrender.MetallicRoughnessMaterial(
                 baseColorFactor=[1.0, 0.2, 0.2, 1.0],  # Bright red
@@ -223,8 +222,23 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         """Setup camera position and orientation."""
         # Adjust camera distance based on scale factor
         camera_distance = 5.0 * max(1.0, self.scale_factor * 0.8)
+        
+        # Original position
+        original_pos = np.array([3.0 * camera_distance/5.0, 2.0 * camera_distance/5.0, camera_distance])
+        
+        # Rotate camera position 135 degrees to the right (clockwise around Y-axis when viewed from above)
+        angle = np.pi * 0.75  # 135 degrees in radians
+        rotation_y = np.array([
+            [np.cos(angle), 0, np.sin(angle)],
+            [0, 1, 0],
+            [-np.sin(angle), 0, np.cos(angle)]
+        ])
+        
+        # Apply rotation to camera position around the target (origin)
+        rotated_pos = rotation_y @ original_pos
+        
         self.camera_pose = np.eye(4)
-        self.camera_pose[:3, 3] = [3.0 * camera_distance/5.0, 2.0 * camera_distance/5.0, camera_distance]
+        self.camera_pose[:3, 3] = rotated_pos
 
         target = np.array([0.0, 0.0, 0.0])
         self.camera_pos = self.camera_pose[:3, 3]
@@ -240,6 +254,72 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_pose[:3, 1] = up_corrected
         self.camera_pose[:3, 2] = -forward
         self.renderer.set_camera_pose(self.camera_pose)
+        
+        # Update lighting direction to point from camera to object
+        self._setup_camera_aligned_lighting()
+    
+    def _setup_camera_aligned_lighting(self):
+        """Setup directional light that points from camera to the object at origin."""
+        import pyrender
+        
+        # Remove existing lights
+        for light_name in list(self.renderer.light_nodes.keys()):
+            if light_name in self.renderer.light_nodes:
+                self.renderer.scene.remove_node(self.renderer.light_nodes[light_name])
+                del self.renderer.light_nodes[light_name]
+        
+        # Calculate direction from camera to object (origin)
+        camera_position = self.camera_pos
+        target = np.array([0.0, 0.0, 0.0])
+        light_direction = target - camera_position
+        light_direction /= np.linalg.norm(light_direction)
+        
+        # Create a directional light that points from camera to object
+        main_light = pyrender.DirectionalLight(
+            color=np.array([1.0, 1.0, 1.0]),
+            intensity=2.0
+        )
+        
+        # Create pose matrix for the light
+        # The light should be positioned at the camera and point toward the object
+        light_pose = np.eye(4)
+        light_pose[:3, 3] = camera_position
+        
+        # Set the light's orientation to point from camera to object
+        # The directional light's direction is along -Z in its local frame
+        # So we need to orient -Z to point in the light_direction
+        forward = light_direction
+        
+        # Create an arbitrary up vector
+        if abs(forward[1]) < 0.9:
+            up = np.array([0.0, 1.0, 0.0])
+        else:
+            up = np.array([1.0, 0.0, 0.0])
+        
+        right = np.cross(forward, up)
+        right /= np.linalg.norm(right)
+        up_corrected = np.cross(right, forward)
+        
+        light_pose[:3, 0] = right
+        light_pose[:3, 1] = up_corrected
+        light_pose[:3, 2] = -forward  # -Z points in the direction of light
+        
+        main_light_node = self.renderer.scene.add(main_light, pose=light_pose)
+        self.renderer.light_nodes['camera_aligned'] = main_light_node
+        
+        # Add a softer fill light from the opposite direction for better visualization
+        fill_light = pyrender.DirectionalLight(
+            color=np.array([0.8, 0.9, 1.0]),
+            intensity=0.3
+        )
+        fill_light_pose = np.eye(4)
+        fill_light_pose[:3, 3] = -camera_position * 0.5
+        fill_light_pose[:3, 0] = -right
+        fill_light_pose[:3, 1] = up_corrected
+        fill_light_pose[:3, 2] = forward  # Opposite direction
+        
+        fill_light_node = self.renderer.scene.add(fill_light, pose=fill_light_pose)
+        self.renderer.light_nodes['fill'] = fill_light_node
     
     def amplify_rotation_prediction(self, rotation_matrix, current_imu_rotation):
         """

@@ -15,7 +15,7 @@ from ui.guidance_widget import create_guidance_widget_renderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
-from common.frame_buffer import FrameBuffer
+from src.inference.lvef.frame_buffer import FrameBuffer
 from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
 import requests
