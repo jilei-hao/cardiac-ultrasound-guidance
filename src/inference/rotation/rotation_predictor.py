@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import numpy as np
@@ -11,14 +12,22 @@ from .rotmat import rot6d_to_matrix
 class RotationPredictor:
     """Real-time rotation prediction for ultrasound frames"""
     
-    def __init__(self, config_path, checkpoint_path, device):
+    def __init__(self, config_path, checkpoint_path, device, dinov3_repo_dir: str | None = None):
         self.device = device
         self.config_path = config_path
         self.checkpoint_path = checkpoint_path
         self.model = None
         self.transform = None
+        
+        if dinov3_repo_dir is None:
+            print("[RotationPredictor] Using default DINOv3 repo path.")
+            self.dinov3_repo_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dinov3")
+        else:
+            self.dinov3_repo_dir = dinov3_repo_dir
+
         self._load_model()
-    
+
+
     def _load_model(self):
         """Load the rotation prediction model"""
         try:
@@ -28,15 +37,14 @@ class RotationPredictor:
                 cfg = json.load(f)
             
             # Use the local DINOv3 repo path
-            dinov3_repo_path = "./dinov3"  # Local DINOv3 repository
             hub_entry = cfg["model"].get("hub_entry", "dinov3_convnext_base")  # Default to convnext_base
-            
-            print(f"🔧 Loading DINOv3 backbone from: {dinov3_repo_path}")
+
+            print(f"🔧 Loading DINOv3 backbone from: {self.dinov3_repo_dir}")
             print(f"🔧 Using hub entry: {hub_entry}")
             
             # Build model
             bb = load_backbone_from_local_hub(
-                dinov3_repo_path, 
+                self.dinov3_repo_dir, 
                 hub_entry
             )
             
