@@ -321,7 +321,8 @@ class FourChamberLandmarkPipeline:
 
 def configure_fourch_landmark_pipeline(weight_path: str = "weights/4ch-seg-251021.pt", 
                                        device: str = "auto",
-                                       landmarks_per_chamber: Optional[Dict[int, int]] = None) -> FourChamberLandmarkPipeline:
+                                       landmarks_per_chamber: Optional[Dict[int, int]] = None,
+                                       dinov3_repo_dir: str | None = None) -> FourChamberLandmarkPipeline:
     """
     Configure the 4-chamber landmark pipeline.
     
@@ -334,7 +335,12 @@ def configure_fourch_landmark_pipeline(weight_path: str = "weights/4ch-seg-25102
     Returns:
         Configured pipeline instance
     """
-    return FourChamberLandmarkPipeline(weight_path, device, landmarks_per_chamber=landmarks_per_chamber)
+    return FourChamberLandmarkPipeline(
+        weight_path,
+        device, 
+        landmarks_per_chamber=landmarks_per_chamber, 
+        dinov3_repo_dir=dinov3_repo_dir
+    )
 
 
 def run_fourch_core_prediction(pipeline: FourChamberLandmarkPipeline, 
