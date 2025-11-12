@@ -41,7 +41,8 @@ class FourChamberLandmarkPipeline:
     """
     
     def __init__(self, weight_path: str, device: str = "auto", img_size: int = 512, 
-                 landmarks_per_chamber: Optional[Dict[int, int]] = None):
+                 landmarks_per_chamber: Optional[Dict[int, int]] = None,
+                dinov3_repo_dir: str | None = None):
         """
         Initialize the pipeline.
         
