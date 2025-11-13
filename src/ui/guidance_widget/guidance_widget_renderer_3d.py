@@ -7,6 +7,8 @@ import os
 import numpy as np
 import trimesh
 import time
+import cv2
+from ..image_helpers import overlay_color_legend
 from scipy.spatial.transform import Rotation as R
 from typing import Optional
 
@@ -26,11 +28,12 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     
     def __init__(self, probe_path: str,
                  background_color=(0.1, 0.1, 0.15, 1.0),
-                 scale_factor=2.0,
+                 scale_factor=3.0,
                  wireframe=False,
                  window_size=(640, 480),
                  render_mode='fullscreen',
                  rotation_amplification=3.0,
+                 legend_image_path: str = "",
                  **kwargs):
         """
         Initialize 3D guidance widget renderer.
@@ -54,6 +57,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.rotation_amplification = rotation_amplification
         self.window_size = window_size
         self.render_mode = render_mode
+        self.legend_image_path = legend_image_path
         
         # Initialize renderer components
         self.renderer = None
@@ -62,7 +66,10 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.materials = None
         self.camera_pose = None
         self.camera_pos = None
+
         
+        self.legend_image = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
+
         # Initialize the 3D renderer
         self._initialize_renderer()
     
@@ -412,12 +419,21 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             color, _ = self.renderer.render(flags=pyrender.RenderFlags.ALL_WIREFRAME)
         else:
             color, _ = self.renderer.render()
-        
+
+        # make a copy of the color
+        color = color.copy()
+
+        # Overlay legend if available
+        if self.legend_image is not None:
+            output_frame = overlay_color_legend(color, self.legend_image, top=10, left=10, pct_width=0.5)
+        else:
+            output_frame = color
+
         # Handle different render modes
         if self.render_mode == 'overlay' and input_frame is not None:
-            return self._overlay_on_frame(color, input_frame)
+            return self._overlay_on_frame(output_frame, input_frame)
         else:
-            return color
+            return output_frame
     
     def _overlay_on_frame(self, widget_frame: np.ndarray, input_frame: np.ndarray) -> np.ndarray:
         """Overlay the 3D widget on an input frame."""
