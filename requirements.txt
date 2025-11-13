@@ -11,17 +11,17 @@ pandas
 torch
 torchvision
 
-# Utilities
-requests
-
 # Rendering
 pyrender
 trimesh
+cairosvg
+
+# Utilities
+requests
+python-dotenv>=1.0.0  # Environment variable management
 
 # macOS window management (required for screen capture helpers)
 # Use the meta package; it pulls AppKit via Cocoa. Guard so non-mac installs don’t fail.
 pyobjc==10.3 ; sys_platform == "darwin"
 # If you specifically need Quartz, keep this (optional if the meta package is used)
 pyobjc-framework-Quartz ; sys_platform == "darwin"
-
-python-dotenv>=1.0.0  # Environment variable management
