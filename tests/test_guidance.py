@@ -176,7 +176,8 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
             'background_color': (0, 0, 0),
             'render_mode': 'fullscreen',
             'window_size': (400, 400),
-            'fallback_to_2d': True
+            'fallback_to_2d': True,
+            'legend_image_path': os.getenv("GUIDANCE_WIDGET_LEGEND_PNG_PATH")
         }
         
         # Renderer-specific configurations
