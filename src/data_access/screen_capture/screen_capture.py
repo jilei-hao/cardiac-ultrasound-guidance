@@ -5,15 +5,18 @@ from data_access.frame_data_input import FrameDataInput
 import time
 
 class ScreenCapture(FrameDataInput):
-  def __init__(self, window_title, app_settings):
+  def __init__(self, window_title):
+    # raise error for non-macOS systems
+    if not mwh.is_macos():
+      raise EnvironmentError("🛑 ScreenCapture is only supported on macOS systems."
+                             " Please use a different data source.")
+    
     self.window_title = window_title
-    self.app_settings = app_settings
     self.sct = None  # Placeholder for mss object
     window_bbox = mwh.get_window_bbox(window_title)
-    if window_bbox:
-      app_settings.input_window_bbox = window_bbox
-    else:
+    if not window_bbox:
       print(f"🟡 Warning: Window '{window_title}' not found. Using default input window dimensions...")
+      window_bbox = {"top": 60, "left": 45, "width": 450, "height": 650}
 
   def start(self):
     """Initialize the mss object."""
