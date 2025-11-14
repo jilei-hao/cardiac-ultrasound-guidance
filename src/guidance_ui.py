@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 import time
 
 import cv2
@@ -11,6 +12,7 @@ from ui.guidance_widget.guidance_widget_renderer_2d import GuidanceWidgetRendere
 from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 from data_access.simulator import FrameDataSimulator
+from common.application_settings import ApplicationSettings
 
 
 @dataclass
@@ -44,6 +46,8 @@ class GuidanceUI:
         self._lvef_running = False
         # Logger
         self._logger = logger
+        # Initialize application settings
+        self._app_settings = ApplicationSettings()
     
     def initialize(self):
         """Initialize components"""
@@ -115,16 +119,15 @@ class GuidanceUI:
         if self._config.input_source == "simulator":
             self._data_streamer = FrameDataSimulator(frames_folder=self._config.frames_folder)
         elif self._config.input_source == "clarius":
-            import data_access.clarius as ClariusStreamer
-            # To be implemented: Clarius data streamer
-            ClariusStreamer.configure(
+            import data_access.clarius.clarius_streamer as clarius_streamer
+            clarius_streamer.configure(
                 self._config.clarius_ip,
                 self._config.clarius_port,
                 "research",
                 512,
                 512
             )
-            self._data_streamer = ClariusStreamer
+            self._data_streamer = clarius_streamer
         elif self._config.input_source == "screen":
             self._data_streamer = ScreenCapture(self._config.screen_capture_window_title)
         else:
@@ -153,6 +156,16 @@ class GuidanceUI:
 
         self._main_window.register_key_handler('e', handle_lvef)
 
+        # Overlay Visibility
+        def handle_toggle_overlay():
+            if self._landmark_renderer.overlay_visible:
+                print("Hiding landmark overlay")
+                self._app_settings.show_overlay = False
+            else:
+                print("Showing landmark overlay")
+                self._app_settings.show_overlay = True
+
+        self._main_window.register_key_handler('r', handle_toggle_overlay)
 
     def run(self):
         """Run the main UI loop."""
@@ -174,6 +187,10 @@ class GuidanceUI:
 
             while self._main_window.is_window_active() and self._guidance_window.is_window_active():
                 frame_data = self._data_streamer.get_frame()
+                
+                if frame_data is None or frame_data.image is None:
+                    continue
+
                 orig_frame = np.array(frame_data.image)
                 if orig_frame is None:
                     continue

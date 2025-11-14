@@ -33,6 +33,7 @@ class ApplicationSettings:
     self.run_image_upload = False
     # add hotkey to NOT show border (default is True)
     self.show_border = True
+    self.show_overlay = True
     self.print_debug_info = False
 
   def increment_landmark_radius(self):
