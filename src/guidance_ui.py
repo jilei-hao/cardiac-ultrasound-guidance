@@ -1,11 +1,12 @@
 from dataclasses import dataclass
-from time import time
+import time
 
 import cv2
 import numpy as np
 from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_dual_window_setup
+from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
 from ui.guidance_widget.guidance_widget_renderer_2d import GuidanceWidgetRenderer2D
 from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
@@ -21,6 +22,7 @@ class GuidanceUIConfig:
     screen_capture_window_title: str = "Input"
     clarius_ip: str = None
     clarius_port: int = 5828
+    window_size: int = 512
 
 
 
@@ -38,6 +40,9 @@ class GuidanceUI:
         self._data_streamer = None
         # Inference Pipeline
         self._guidance_pipeline = None
+        self._latest_lvef = None
+        self._lvef_running = False
+        # Logger
         self._logger = logger
     
     def initialize(self):
@@ -63,8 +68,8 @@ class GuidanceUI:
         self._main_window, self._guidance_window = create_dual_window_setup(
             main_title="Annotated Ultrasound",
             guidance_title="Guidance Widget",
-            width=1024,
-            height=1024,
+            width=self._config.window_size,
+            height=self._config.window_size,
             x_pos=100,
             y_pos=100
         )
@@ -137,6 +142,17 @@ class GuidanceUI:
         self._main_window.register_key_handler('q', handle_quit)
         self._guidance_window.register_key_handler('q', handle_quit)
 
+        # LVEF computation
+        def handle_lvef():
+            print("LVEF key pressed!")
+            if not self._lvef_running:
+                self._lvef_running = True
+                self._guidance_pipeline.run_lvef_async()
+            else:
+                print("LVEF computation is already running.")
+
+        self._main_window.register_key_handler('e', handle_lvef)
+
 
     def run(self):
         """Run the main UI loop."""
@@ -162,20 +178,42 @@ class GuidanceUI:
                 if orig_frame is None:
                     continue
 
+                if frame_data.imu is not None:
+                    imu = frame_data.imu
+                    qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
+                else:
+                    qw, qx, qy, qz = 1.0, 1.0, 1.0, 1.0  # Default quaternion if no IMU data
+
                 # Preprocess frame
                 orig_gray_512 = cv2.cvtColor(orig_frame, cv2.COLOR_BGR2GRAY)
                 orig_gray_512 = cv2.resize(orig_gray_512, (512, 512))
 
                 # Run inference
-                cla, landmarks_tensor, rotation_prediction, pose_classification_prediction = self._guidance_pipeline.run_inference(orig_gray_512)
-
+                inference_output = self._guidance_pipeline.run_inference(orig_gray_512)
 
                 # Prepare output frames
-                out_main_frame = orig_frame.copy()
-                out_guidance_frame = orig_frame.copy()
+                out_frame_main_rgb = cv2.cvtColor(orig_gray_512, cv2.COLOR_GRAY2RGB)
+                out_frame_main_rgb = self._landmark_renderer.overlay_landmarks(
+                    out_frame_main_rgb,
+                    inference_output.landmarks_tensor
+                )
+                out_frame_main_rgb = add_rgb_border_to_result(out_frame_main_rgb, inference_output.pose_classification_prediction_rgb)
+                if self._latest_lvef is not None:
+                    self._lvef_running = False  # Reset running flag when result is ready
+                    draw_text_on_frame(out_frame_main_rgb, "LVEF: " + str(self._latest_lvef) + "%")
+
+                out_frame_guidance_rgb = self._guidance_widget_renderer.render_widget(
+                    orig_frame,
+                    qw, qx, qy, qz,
+                    inference_output.rotation_prediction
+                )
+
+                out_guidance_frame = out_frame_guidance_rgb.copy()
+
+
 
                 # Display output frame
-                if not self._main_window.display_frame_rgb(out_main_frame):
+                if not self._main_window.display_frame_rgb(out_frame_main_rgb):
                     print("❌ Failed to display main frame")
                     break
 
@@ -217,6 +255,7 @@ def main():
     parser.add_argument("--frames-folder", type=str, default=None, help="Folder containing frames for simulator")
     parser.add_argument("--capture-window-title", type=str, default="Input", help="Window title for screen capture")
     parser.add_argument("--force-2d", action="store_true", default=False, help="Force use of 2D guidance widget")
+    parser.add_argument("--window-size", type=int, default=512, help="Window size for the UI windows")
 
     options = parser.parse_args()
 
@@ -236,7 +275,8 @@ def main():
         screen_capture_window_title=options.capture_window_title,
         clarius_ip=options.clarius_ip,
         clarius_port=options.clarius_port,
-        force_2d_guidance_widget=options.force_2d
+        force_2d_guidance_widget=options.force_2d,
+        window_size=options.window_size
     )
 
     ui = GuidanceUI(config)

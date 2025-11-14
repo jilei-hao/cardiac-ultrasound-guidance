@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
+import numpy as np
 from .inference_helper import get_device
 from .fourch_landmark.fourch_landmark_pipeline import (
     configure_fourch_landmark_pipeline,
@@ -30,6 +31,13 @@ class GuidancePipelineConfig:
     pose_classification_weights: str
     lvef_weights: str
     landmarks_per_chamber: dict
+
+@dataclass
+class GuidancePipelineOutput:
+    cla: np.ndarray
+    landmarks_tensor: np.ndarray
+    rotation_prediction: np.ndarray
+    pose_classification_prediction_rgb: np.ndarray
 
 
 class GuidancePipeline:
@@ -79,7 +87,12 @@ class GuidancePipeline:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_classification_prediction)
 
-        return cla, landmarks_tensor, rotation_prediction, pose_classification_prediction
+        return GuidancePipelineOutput(
+            cla=cla,
+            landmarks_tensor=landmarks_tensor,
+            rotation_prediction=rotation_prediction,
+            pose_classification_prediction_rgb=pose_classification_prediction
+        )
     
 
     def run_lvef_async(self):
