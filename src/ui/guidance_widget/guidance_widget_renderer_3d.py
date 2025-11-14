@@ -67,8 +67,8 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_pose = None
         self.camera_pos = None
 
-        
-        self.legend_image = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
+
+        self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
         # Initialize the 3D renderer
         self._initialize_renderer()
@@ -361,14 +361,14 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         return current_rotation_3x3 @ exaggerated_inverse
     
     
-    def render_widget(self, input_frame: Optional[np.ndarray] = None,
+    def render_widget(self, input_frame_bgr: Optional[np.ndarray] = None,
                      qw: float = 1.0, qx: float = 0.0, qy: float = 0.0, qz: float = 0.0,
                      predicted_rotation_matrix: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Render the 3D guidance widget.
         
         Args:
-            input_frame: Input frame (ignored for fullscreen mode)
+            input_frame_bgr: Input frame (ignored for fullscreen mode)
             qw, qx, qy, qz: Quaternion components for probe orientation
             predicted_rotation_matrix: Optional 3x3 predicted rotation correction matrix (raw prediction)
             
@@ -422,16 +422,17 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
 
         # make a copy of the color
         color = color.copy()
+        rendered_frame_bgra = cv2.cvtColor(color, cv2.COLOR_RGBA2BGRA)
 
         # Overlay legend if available
-        if self.legend_image is not None:
-            output_frame = overlay_color_legend(color, self.legend_image, top=10, left=10, pct_width=0.5)
+        if self.legend_image_bgra is not None:
+            output_frame = overlay_color_legend(rendered_frame_bgra, self.legend_image_bgra, top=10, left=10, pct_width=0.5)
         else:
-            output_frame = color
+            output_frame = rendered_frame_bgra
 
         # Handle different render modes
-        if self.render_mode == 'overlay' and input_frame is not None:
-            return self._overlay_on_frame(output_frame, input_frame)
+        if self.render_mode == 'overlay' and input_frame_bgr is not None:
+            return self._overlay_on_frame(output_frame, input_frame_bgr)
         else:
             return output_frame
     

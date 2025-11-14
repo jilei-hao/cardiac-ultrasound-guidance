@@ -12,15 +12,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
-import inference.inference_helper as ihp
-from inference.fourch_landmark.fourch_landmark_pipeline import (
+import numpy as np
+from .inference_helper import get_device
+from .fourch_landmark.fourch_landmark_pipeline import (
     configure_fourch_landmark_pipeline,
     run_fourch_core_prediction
 )
-from inference.rotation.rotation_predictor import create_rotation_predictor
-from inference.pose_classification import pose_classification
-from inference.pose_classification.pose_classification import PoseClassifierResultPooler
-from inference.lvef.lvef_prediction import LVEFPredictor
+from .rotation.rotation_predictor import create_rotation_predictor
+from .pose_classification import pose_classification
+from .pose_classification.pose_classification import PoseClassifierResultPooler
+from .lvef.lvef_prediction import LVEFPredictor
 
 @dataclass
 class GuidancePipelineConfig:
@@ -31,10 +32,17 @@ class GuidancePipelineConfig:
     lvef_weights: str
     landmarks_per_chamber: dict
 
+@dataclass
+class GuidancePipelineOutput:
+    cla: np.ndarray
+    landmarks_tensor: np.ndarray
+    rotation_prediction: np.ndarray
+    pose_classification_prediction_rgb: np.ndarray
+
 
 class GuidancePipeline:
     def __init__(self, config: GuidancePipelineConfig):
-        self.__device = ihp.get_device()
+        self.__device = get_device()
         self.__landmark_pipeline = configure_fourch_landmark_pipeline(
             weight_path=config.fourch_landmark_weights,
             device=self.__device,
@@ -79,7 +87,12 @@ class GuidancePipeline:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_classification_prediction)
 
-        return cla, landmarks_tensor, rotation_prediction, pose_classification_prediction
+        return GuidancePipelineOutput(
+            cla=cla,
+            landmarks_tensor=landmarks_tensor,
+            rotation_prediction=rotation_prediction,
+            pose_classification_prediction_rgb=pose_classification_prediction
+        )
     
 
     def run_lvef_async(self):

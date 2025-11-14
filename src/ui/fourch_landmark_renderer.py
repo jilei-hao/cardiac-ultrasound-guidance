@@ -108,17 +108,19 @@ class FourChamberLandmarkRenderer:
         return float(np.clip(opacity, self.min_opacity, self.max_opacity))
     
 
-    def _overlay_color_legend(self, input_frame):
+    def _overlay_color_legend(self, input_frame_bgr):
         # Overlay the color legend on the input frame (top-left corner)
         if self.color_legend_bgra is None:
-            return input_frame
+            return input_frame_bgr
         
-        overlay_color_legend(input_frame, self.color_legend_bgra, top=10, left=10, pct_width=0.2, margin=20)
-        return input_frame
+        # Reverse RGB/BGR for PNG visualization (swap R and B channels)
+        # legend_bgra_swapped = self.color_legend_bgra[:, :, [2, 1, 0, 3]] if self.color_legend_bgra.shape[2] == 4 else self.color_legend_bgra[:, :, [2, 1, 0]]
+        overlay_color_legend(input_frame_bgr, self.color_legend_bgra, top=10, left=10, pct_width=0.2, margin=20)
+        return input_frame_bgr
     
     def overlay_landmarks(
         self,
-        vis_frame: np.ndarray,
+        vis_frame_bgr: np.ndarray,
         landmarks_tensor: np.ndarray,
         reference_size: Optional[int] = None
     ) -> np.ndarray:
@@ -126,7 +128,7 @@ class FourChamberLandmarkRenderer:
         Overlay landmarks on the visualization frame with connecting lines.
         
         Args:
-            vis_frame: Visualization frame (BGR format)
+            vis_frame_bgr: Visualization frame (BGR format)
             landmarks_tensor: Tensor with landmark coordinates (N, 4) format:
                             [x, y, uncertainty, label]
             reference_size: Override reference_size if provided
@@ -135,21 +137,21 @@ class FourChamberLandmarkRenderer:
             Frame with landmarks overlaid
         """
         if landmarks_tensor.shape[0] == 0:
-            return vis_frame
+            return vis_frame_bgr
         
         # Check if landmarks have label information (4 elements)
         has_labels = landmarks_tensor.shape[1] >= 4
         if not has_labels:
             # Fallback: treat as (x, y, ere) format
-            return self._overlay_landmarks_legacy(vis_frame, landmarks_tensor, reference_size)
+            return self._overlay_landmarks_legacy(vis_frame_bgr, landmarks_tensor, reference_size)
         
         # Use provided reference_size or instance default
         ref_size = reference_size if reference_size is not None else self.reference_size
         
         # Scale coordinates if landmarks are in reference_size coordinates
         if ref_size is not None:
-            scale_x = vis_frame.shape[1] / ref_size
-            scale_y = vis_frame.shape[0] / ref_size
+            scale_x = vis_frame_bgr.shape[1] / ref_size
+            scale_y = vis_frame_bgr.shape[0] / ref_size
         else:
             scale_x = 1.0
             scale_y = 1.0
@@ -174,8 +176,8 @@ class FourChamberLandmarkRenderer:
             if len(chamber_landmarks) < 2:
                 continue
             
-            color = self.get_color_for_chamber(label)
-            chamber_overlay = vis_frame.copy()
+            color_bgr = self.get_color_for_chamber(label)
+            chamber_overlay = vis_frame_bgr.copy()
             
             # Draw lines connecting consecutive landmarks
             for i in range(len(chamber_landmarks)):
@@ -183,17 +185,17 @@ class FourChamberLandmarkRenderer:
                 x2, y2, _ = chamber_landmarks[(i + 1) % len(chamber_landmarks)]  # Connect last to first
                 
                 # Draw line on overlay
-                cv2.line(chamber_overlay, (x1, y1), (x2, y2), color, self.line_thickness, lineType=cv2.LINE_AA)
+                cv2.line(chamber_overlay, (x1, y1), (x2, y2), color_bgr, self.line_thickness, lineType=cv2.LINE_AA)
             
             # Blend entire chamber overlay with average opacity
             avg_uncertainty = np.mean([unc for _, _, unc in chamber_landmarks])
             avg_chamber_opacity = self.uncertainty_to_opacity(avg_uncertainty)
-            cv2.addWeighted(chamber_overlay, avg_chamber_opacity, vis_frame, 1.0 - avg_chamber_opacity, 0, vis_frame)
+            cv2.addWeighted(chamber_overlay, avg_chamber_opacity, vis_frame_bgr, 1.0 - avg_chamber_opacity, 0, vis_frame_bgr)
         
         # Draw landmark points
         for c, lm in enumerate(landmarks_tensor):
             x, y, uncertainty, label = lm[0], lm[1], lm[2], lm[3]
-            color = self.get_color_for_chamber(label)
+            color_bgr = self.get_color_for_chamber(label)
             
             # Convert uncertainty to opacity
             uncertainty_val = uncertainty.item() if hasattr(uncertainty, 'item') else float(uncertainty)
@@ -205,31 +207,31 @@ class FourChamberLandmarkRenderer:
                 scaled_y = int(y.item() * scale_y)
                 
                 # Extract a small region around the landmark for efficient blending
-                h, w = vis_frame.shape[:2]
+                h, w = vis_frame_bgr.shape[:2]
                 x1 = max(0, scaled_x - self.landmark_radius - 2)
                 y1 = max(0, scaled_y - self.landmark_radius - 2)
                 x2 = min(w, scaled_x + self.landmark_radius + 2)
                 y2 = min(h, scaled_y + self.landmark_radius + 2)
                 
                 # Create small overlay for this landmark region
-                region_original = vis_frame[y1:y2, x1:x2].copy()
+                region_original = vis_frame_bgr[y1:y2, x1:x2].copy()
                 region_overlay = region_original.copy()
                 
                 # Draw circle relative to the region
-                cv2.circle(region_overlay, (scaled_x - x1, scaled_y - y1), self.landmark_radius, color, -1)
+                cv2.circle(region_overlay, (scaled_x - x1, scaled_y - y1), self.landmark_radius, color_bgr, -1)
                 
                 # Blend this region with calculated opacity
                 region_blended = cv2.addWeighted(region_overlay, opacity, region_original, 1.0 - opacity, 0)
-                vis_frame[y1:y2, x1:x2] = region_blended
+                vis_frame_bgr[y1:y2, x1:x2] = region_blended
 
         # Overlay color legend if available
-        vis_frame = self._overlay_color_legend(vis_frame)
+        vis_frame_bgr = self._overlay_color_legend(vis_frame_bgr)
         
-        return vis_frame
+        return vis_frame_bgr
     
     def _overlay_landmarks_legacy(
         self,
-        vis_frame: np.ndarray,
+        vis_frame_bgr: np.ndarray,
         landmarks_tensor: np.ndarray,
         reference_size: Optional[int] = None,
         ere_threshold: float = 6.0
@@ -238,7 +240,7 @@ class FourChamberLandmarkRenderer:
         Legacy overlay for landmarks without label information (backward compatibility).
         
         Args:
-            vis_frame: Visualization frame (BGR format)
+            vis_frame_bgr: Visualization frame (BGR format)
             landmarks_tensor: Tensor with (x, y, ere) format
             reference_size: Reference size for coordinate scaling
             ere_threshold: ERE threshold for filtering
@@ -249,7 +251,7 @@ class FourChamberLandmarkRenderer:
         # This is a fallback for old landmark format
         # For now, return the frame unchanged if no labels are present
         # Can be extended if needed for backward compatibility
-        return vis_frame
+        return vis_frame_bgr
     
     def set_landmark_radius(self, radius: int):
         """Update landmark radius and recalculate line thickness."""

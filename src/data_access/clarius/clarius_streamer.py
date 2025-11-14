@@ -2,9 +2,6 @@ import data_access.clarius.pyclariuscast as pyclariuscast
 from PIL import Image
 import queue
 from data_access.frame_data import FrameData
-from data_access.frame_data_input import FrameDataInput
-import os
-import sys
 from pathlib import Path
 
 class ClariusSettings:
@@ -200,64 +197,64 @@ def set_print_debug_info(debug: bool):
     print("-- [Clarius Streamer] Debugging information disabled")
 
 
-class ClariusStreamer(FrameDataInput):
-  """
-  Clarius ultrasound probe streamer implementation of FrameDataInput.
-  Wraps the global functions into a class-based interface.
-  """
+# class ClariusStreamer(FrameDataInput):
+#   """
+#   Clarius ultrasound probe streamer implementation of FrameDataInput.
+#   Wraps the global functions into a class-based interface.
+#   """
   
-  def __init__(self, ip: str, port: int, path: str, width: int = 512, height: int = 512):
-    """
-    Initialize the Clarius streamer.
+#   def __init__(self, ip: str, port: int, path: str, width: int = 512, height: int = 512):
+#     """
+#     Initialize the Clarius streamer.
     
-    Args:
-        ip: IP address of the Clarius probe
-        port: Port number for connection
-        path: Path for the connection (typically 'research')
-        width: Image width in pixels
-        height: Image height in pixels
-    """
-    self.ip = ip
-    self.port = port
-    self.path = path
-    self.width = width
-    self.height = height
-    self._configured = False
+#     Args:
+#         ip: IP address of the Clarius probe
+#         port: Port number for connection
+#         path: Path for the connection (typically 'research')
+#         width: Image width in pixels
+#         height: Image height in pixels
+#     """
+#     self.ip = ip
+#     self.port = port
+#     self.path = path
+#     self.width = width
+#     self.height = height
+#     self._configured = False
 
-    # Add the clarius library path to system library paths
-    clarius_lib_path = Path(__file__).parent.absolute()
-    if sys.platform == "linux" or sys.platform == "linux2":
-      os.environ["LD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
-    elif sys.platform == "darwin":
-      os.environ["DYLD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("DYLD_LIBRARY_PATH", "")
+#     # Add the clarius library path to system library paths
+#     clarius_lib_path = Path(__file__).parent.absolute()
+#     if sys.platform == "linux" or sys.platform == "linux2":
+#       os.environ["LD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+#     elif sys.platform == "darwin":
+#       os.environ["DYLD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("DYLD_LIBRARY_PATH", "")
   
-  def start(self):
-    """Initialize and start the Clarius probe connection."""
-    if not self._configured:
-      configure(self.ip, self.port, self.path, self.width, self.height)
-      self._configured = True
-    start()
+#   def start(self):
+#     """Initialize and start the Clarius probe connection."""
+#     if not self._configured:
+#       configure(self.ip, self.port, self.path, self.width, self.height)
+#       self._configured = True
+#     start()
   
-  def stop(self):
-    """Stop the Clarius probe connection."""
-    stop()
-    self._configured = False
+#   def stop(self):
+#     """Stop the Clarius probe connection."""
+#     stop()
+#     self._configured = False
   
-  def get_frame(self) -> FrameData:
-    """
-    Get the most recent frame from the Clarius probe.
+#   def get_frame(self) -> FrameData:
+#     """
+#     Get the most recent frame from the Clarius probe.
     
-    Returns:
-        FrameData: Frame data with image, timestamp, and IMU data
-    """
-    frame = get_frame()
-    if frame is None:
-      return FrameData(None, None, None)
-    return frame
+#     Returns:
+#         FrameData: Frame data with image, timestamp, and IMU data
+#     """
+#     frame = get_frame()
+#     if frame is None:
+#       return FrameData(None, None, None)
+#     return frame
   
-  def set_debug_info(self, debug: bool):
-    """Enable or disable debug information printing."""
-    set_print_debug_info(debug)
+#   def set_debug_info(self, debug: bool):
+#     """Enable or disable debug information printing."""
+#     set_print_debug_info(debug)
 
 
 if __name__ == "__main__":

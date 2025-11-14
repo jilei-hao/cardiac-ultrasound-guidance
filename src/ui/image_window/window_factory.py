@@ -26,6 +26,10 @@ def get_image_window_class(backend: Optional[str] = None) -> Type[AbstractImageW
     backend = _normalize_backend(backend)
     system = platform.system().lower()
 
+    # Handle explicit backend selection
+    if backend == "qt":
+        from .qt_image_window import QtImageWindow
+        return QtImageWindow
     if backend == "tk":
         from .macos_image_window import MacOSImageWindow
         return MacOSImageWindow
@@ -33,17 +37,24 @@ def get_image_window_class(backend: Optional[str] = None) -> Type[AbstractImageW
         from .linux_image_window import LinuxImageWindow
         return LinuxImageWindow
     
-    if system == 'darwin':  # macOS
-        from .macos_image_window import MacOSImageWindow
-        return MacOSImageWindow
-    elif system == 'linux':  # Linux/Ubuntu
-        from .linux_image_window import LinuxImageWindow
-        return LinuxImageWindow
-    else:
-        # Windows or other platforms - default to cross-platform implementation
-        print(f"Warning: Platform '{system}' not specifically supported. Using Linux implementation as fallback.")
-        from .linux_image_window import LinuxImageWindow
-        return LinuxImageWindow
+    # Default to Qt for all platforms (cross-platform solution)
+    # Qt works on macOS, Linux, and Windows
+    try:
+        from .qt_image_window import QtImageWindow
+        return QtImageWindow
+    except ImportError:
+        # Fall back to platform-specific implementations if Qt is not available
+        if system == 'darwin':  # macOS
+            from .macos_image_window import MacOSImageWindow
+            return MacOSImageWindow
+        elif system == 'linux':  # Linux/Ubuntu
+            from .linux_image_window import LinuxImageWindow
+            return LinuxImageWindow
+        else:
+            # Windows or other platforms - try Linux implementation as last resort
+            print(f"Warning: Platform '{system}' not specifically supported and Qt not available. Using Linux implementation as fallback.")
+            from .linux_image_window import LinuxImageWindow
+            return LinuxImageWindow
 
 
 def create_image_window(*, backend: Optional[str] = None, **kwargs) -> AbstractImageWindow:

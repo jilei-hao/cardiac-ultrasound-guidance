@@ -15,7 +15,7 @@ from ui.guidance_widget import create_guidance_widget_renderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
-from src.inference.lvef.frame_buffer import FrameBuffer
+from inference.lvef.frame_buffer import FrameBuffer
 from inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
 import requests
@@ -147,11 +147,12 @@ def run_event_loop(options, config):
     weight_path=config["fourch_landmark_weight_path"],
     device=device,
     landmarks_per_chamber={
-        50: 12,   # Left Ventricle (LV)
+        50: 24,   # Left Ventricle (LV)
         100: 12,  # Right Ventricle (RV)
         150: 12,  # Left Atrium (LA)
         200: 12,  # Right Atrium (RA)
     }
+
   )
   # landmark_model = None
   weight_path = ""
@@ -197,7 +198,14 @@ def run_event_loop(options, config):
     min_opacity=0.6,
     max_opacity=1.0,
     uncertainty_threshold=6.0,
-    reference_size=None  # Landmarks are already in crop_frame coordinates
+    reference_size=None,  # Landmarks are already in crop_frame coordinates
+    color_map={
+            50: ih.rgb_to_bgr((180, 100, 255)),      # Left Ventricle (LV) - Bright Pink/Magenta (RGB: 255,100,180)
+            100: ih.rgb_to_bgr((50, 200, 200)),      # Right Ventricle (RV) - Bright Yellow (RGB: 200,200,50)
+            150: ih.rgb_to_bgr((150, 255, 100)),     # Left Atrium (LA) - Bright Green (RGB: 100,255,150)
+            200: ih.rgb_to_bgr((100, 150, 255)),     # Right Atrium (RA) - Bright Orange (RGB: 255,150,100)
+    },
+    color_legend_png_path="assets/4ch-legend_static_v1.png"  # Overlay legend in top-left corner
   )
 
   # Initialize probe renderer (loads probe once for efficiency)
@@ -344,12 +352,13 @@ def run_event_loop(options, config):
       widget_display = probe_renderer.render_widget(np.zeros_like(vis_frame), qw, qx, qy, qz, predicted_rotation_matrix=last_predicted_rotation_matrix)
      
       if app_settings.show_border:
-        vis_frame = ih.add_rgb_border_to_result(vis_frame, crnt_classifier_result_pooled)
+        vis_frame = ih.add_rgb_border_to_result(vis_frame, ih.rgb_to_bgr(crnt_classifier_result_pooled))
       
       # Convert crop_frame to RGB for frame buffer
       crop_frame_rgb = cv2.cvtColor(crop_frame, cv2.COLOR_GRAY2RGB)
       # add frame to the buffer (pipeline will handle resizing if needed)
-      lvef_predictor.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
+      # lvef_predictor.add_frame(crop_frame_rgb, crnt_classifier_result_pooled)
+      lvef_predictor.add_frame_to_buffer(crop_frame_rgb, crnt_classifier_result_pooled)
       # print("Frame buffer size: ", frame_buffer.get_number_of_frames(), " is ok: ", frame_buffer.is_video_good())
 
 
@@ -362,7 +371,7 @@ def run_event_loop(options, config):
 
       if lvef_result is not None:
         # Draw the LVEF prediction on the frame
-        vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(round(lvef_result.item())) + "%")
+        vis_frame = ih.draw_text_on_frame(vis_frame, "LVEF: " + str(lvef_result) + "%")
 
       try:
         # get the current geometry of the window
@@ -446,30 +455,34 @@ def run_event_loop(options, config):
 
 def main():
   import argparse
-  parser = argparse.ArgumentParser(description='Capture screen frames.')
-  parser.add_argument('--source', type=str, default='screen', help='Source of the frames (screen | clarius).')
+  from dotenv import load_dotenv
+  load_dotenv()
+
+  parser = argparse.ArgumentParser(description='Run cardiac ultrasound guidance inference.')
+  parser.add_argument('--source', type=str, default='screen', help='Source of the frames (screen | clarius | frames).')
   parser.add_argument('--clarius_ip', type=str, default='192.168.1.1', help='IP address of the Clarius probe.')
   parser.add_argument('--clarius_port', type=int, default=5828, help='Port of the Clarius probe.')
   parser.add_argument('--guidance_window', action='store_true', help='Enable guidance widget rendering window.')
-  parser.add_argument('--save', action='store_true', help='Save frames as images.')
-  parser.add_argument('--save_folder', type=str, default="output", help='Folder to save images.')
+  parser.add_argument('--save', type=str, default=None, metavar='PATH', help='Save frames as images to the specified folder.')
   parser.add_argument('--window_title', type=str, default="SM-T860", help='Title of the window to capture.')
   parser.add_argument('--upload_url', type=str, default="http://localhost:8000/upload", help='URL to upload the frame to.')
   parser.add_argument('--imglmk', default=False, action='store_true', help='Use image + landmarks for pose classification.')
   options = parser.parse_args()
 
-  config = {
-    "landmark_weight_path": "weights/landmark-prediction_v1.pth",
-    "pose_classifier_imglmk_weight_path": "weights/postest-imglmk-v1.pth",
-    "pose_classifier_img_weight_path": "weights/postest-img-v1.pth",
-    "lvef_weight_path": "weights/echonet_v1.pt",
-    "rotation_config_path": "src/inference/rotation/config.json",
-    "rotation_checkpoint_path": "weights/rotation-prediction_v1.pt",
-    "probe_mesh_path": "assets/transducer.stl",
-    "fourch_landmark_weight_path": "weights/4ch-seg_v1.pt"
+  env_config = {
+    "landmark_weight_path": os.getenv("LANDMARK_WEIGHTS", "weights/landmark_v1.pth"),
+    "pose_classifier_imglmk_weight_path": os.getenv("POSE_EST_IMGLMK_WEIGHTS", "weights/pose-est-imglmk_v1.pth"),
+    "pose_classifier_img_weight_path": os.getenv("POSE_EST_IMG_WEIGHTS", "weights/pose-est-img_v1.pth"),
+    "lvef_weight_path": os.getenv("LVEF_WEIGHTS", "weights/echonet_v1.pt"),
+    "rotation_config_path": os.getenv("ROTATION_PREDICTION_CONFIG", "src/inference/rotation/config.json"),
+    "rotation_checkpoint_path": os.getenv("ROTATION_PREDICTION_WEIGHTS", "weights/rotation-prediction_v1.pt"),
+    "probe_mesh_path": os.getenv("PROBE_MESH_PATH", "assets/transducer.stl"),
+    "fourch_landmark_weight_path": os.getenv("4CH_WEIGHTS", "weights/4ch-seg_v2.pt"),
+    "landmark_color_legend_png_path": os.getenv("LANDMARK_COLOR_LEGEND_PNG_PATH", "assets/4ch-legend_static_v1.png"),
+    "guidance_widget_legend_png_path": os.getenv("GUIDANCE_WIDGET_LEGEND_PNG_PATH", "assets/guidance_widget_legend_static_v1.png")
   }
 
-  run_event_loop(options, config)
+  run_event_loop(options, env_config)
 
 
 if __name__ == "__main__":

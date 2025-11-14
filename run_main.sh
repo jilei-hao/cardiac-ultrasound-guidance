@@ -16,5 +16,5 @@ python3 src/main.py \
   --window_title "Input" \
   --upload_url http://$server_ip:8000/upload \
   --guidance_window \
-  --imglmk
+  --img
 # --save --save_folder /path/to/output/folder

@@ -18,10 +18,10 @@ def add_rgb_circle_to_result(input_frame, rgb):
     center = (90, 22); radius = 5
     return draw_circle_on_image(center, radius, input_frame, rgb)
 
-def add_rgb_border_to_result(input_frame, rgb):
+def add_rgb_border_to_result(input_frame_bgr, rgb):
     width = 40
     bgr = rgb_to_bgr(rgb)
-    return draw_border_around_image(input_frame, width, bgr)
+    return draw_border_around_image(input_frame_bgr, width, bgr)
 
 def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6, reference_size=112):
     """
