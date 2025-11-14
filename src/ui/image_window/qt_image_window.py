@@ -111,6 +111,8 @@ class QtImageWindow(AbstractImageWindow):
             
             # Handle window close event
             self.window.closeEvent = self._on_close_event
+            # Handle window resize event to rescale displayed image
+            self.window.resizeEvent = self._on_resize_event
             
             # Show window
             self.window.show()
@@ -357,3 +359,30 @@ class QtImageWindow(AbstractImageWindow):
         self.is_initialized = False
         QtImageWindow._window_count -= 1
         event.accept()
+
+    def _on_resize_event(self, event):
+        """
+        Handle window resize event: update label geometry and rescale image.
+        
+        Args:
+            event: Qt resize event
+        """
+        try:
+            if self.window is None:
+                return
+            # Update tracked size
+            new_size = self.window.size()
+            self.width, self.height = new_size.width(), new_size.height()
+            # Ensure label fills the client area
+            if self.label is not None:
+                self.label.setGeometry(0, 0, self.width, self.height)
+                # Rescale current image to fit new size while preserving aspect ratio
+                if self.current_pixmap is not None and not self.current_pixmap.isNull():
+                    scaled = self.current_pixmap.scaled(
+                        self.label.size(),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.label.setPixmap(scaled)
+        finally:
+            event.accept()

@@ -297,7 +297,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                 orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2GRAY)
                 orig_frame = cv2.cvtColor(orig_frame, cv2.COLOR_BGRA2RGB)  # Convert to RGB for display
 
-            cla, landmarks_tensor, rotation_prediction, pose_classification_prediction_rgb = guidance_pipeline.run_inference(orig_gray)
+            inference_output = guidance_pipeline.run_inference(orig_gray)
             
             # Run LVEF once
             if latest_lvef is None:
@@ -310,11 +310,11 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
             result_frame = cv2.cvtColor(orig_gray, cv2.COLOR_GRAY2RGB)
             result_frame = landmark_renderer.overlay_landmarks(
                 result_frame,
-                landmarks_tensor,
+                inference_output.landmarks_tensor,
                 reference_size=None
             )
 
-            result_frame = ih.add_rgb_border_to_result(result_frame, pose_classification_prediction_rgb)
+            result_frame = ih.add_rgb_border_to_result(result_frame, inference_output.pose_classification_prediction_rgb)
 
             if latest_lvef is not None:
                 ih.draw_text_on_frame(result_frame, "LVEF: " + str(round(latest_lvef)) + "%")
@@ -328,7 +328,7 @@ def test_guidance_unified(source, frames_folder=None, clarius_ip=None, clarius_p
                     widget_display = probe_renderer.render_widget(
                         np.zeros_like(orig_gray),
                         qw, qx, qy, qz,
-                        predicted_rotation_matrix=rotation_prediction
+                        predicted_rotation_matrix=inference_output.rotation_prediction
                     )
                 else:
                     # 3D renderer signature with quaternion only

@@ -192,32 +192,34 @@ class GuidanceUI:
                 inference_output = self._guidance_pipeline.run_inference(orig_gray_512)
 
                 # Prepare output frames
-                out_frame_main_rgb = cv2.cvtColor(orig_gray_512, cv2.COLOR_GRAY2RGB)
-                out_frame_main_rgb = self._landmark_renderer.overlay_landmarks(
-                    out_frame_main_rgb,
+                out_frame_main_bgr = cv2.cvtColor(orig_gray_512, cv2.COLOR_GRAY2BGR)
+                out_frame_main_bgr = self._landmark_renderer.overlay_landmarks(
+                    out_frame_main_bgr,
                     inference_output.landmarks_tensor
                 )
-                out_frame_main_rgb = add_rgb_border_to_result(out_frame_main_rgb, inference_output.pose_classification_prediction_rgb)
+            
+                out_frame_main_bgr = add_rgb_border_to_result(out_frame_main_bgr, inference_output.pose_classification_prediction_rgb)
                 if self._latest_lvef is not None:
                     self._lvef_running = False  # Reset running flag when result is ready
-                    draw_text_on_frame(out_frame_main_rgb, "LVEF: " + str(self._latest_lvef) + "%")
+                    draw_text_on_frame(out_frame_main_bgr, "LVEF: " + str(self._latest_lvef) + "%")
 
-                out_frame_guidance_rgb = self._guidance_widget_renderer.render_widget(
+                
+                out_frame_guidance_bgr = self._guidance_widget_renderer.render_widget(
                     orig_frame,
                     qw, qx, qy, qz,
                     inference_output.rotation_prediction
                 )
 
-                out_guidance_frame = out_frame_guidance_rgb.copy()
-
+                out_frame_main = cv2.cvtColor(out_frame_main_bgr, cv2.COLOR_BGR2RGB)
+                out_frame_guidance = cv2.cvtColor(out_frame_guidance_bgr, cv2.COLOR_BGR2RGB)
 
 
                 # Display output frame
-                if not self._main_window.display_frame_rgb(out_frame_main_rgb):
+                if not self._main_window.display_frame_rgb(out_frame_main):
                     print("❌ Failed to display main frame")
                     break
 
-                if not self._guidance_window.display_frame_rgb(out_guidance_frame):
+                if not self._guidance_window.display_frame_rgb(out_frame_guidance):
                     print("❌ Failed to display guidance frame")
                     break
                 
@@ -226,7 +228,7 @@ class GuidanceUI:
                     print("🛑 One or both windows closed")
                     break
 
-                time.sleep(0.1)
+                time.sleep(0.05)
 
         except Exception as e:
             print(f"🛑 [GuidanceUI] main loop exception: {e}")
