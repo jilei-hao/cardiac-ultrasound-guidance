@@ -16,6 +16,9 @@ pyrender
 trimesh
 cairosvg
 
+# GUI / Cross-platform windowing
+PySide6  # Qt6 bindings for cross-platform windows (Linux, macOS, Windows)
+
 # Utilities
 requests
 python-dotenv>=1.0.0  # Environment variable management
