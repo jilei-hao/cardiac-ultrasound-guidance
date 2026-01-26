@@ -27,16 +27,16 @@
    pip install -e .[dev]
    ```
 
-4. After installation, you can use the following commands:
+4. After installation, you can use the following commands, always source `scripts/setup.sh` before any run:
    ```bash
    # Main guidance application
-   cusg-main --help
+   source scripts/setup.sh && cusg-main --help
    
    # Guidance UI application  
-   cusg-guidance-ui --help
+   source scripts/setup.sh && cusg-guidance-ui --help
    
    # IMU recording utility
-   cusg-record-imu --help
+   source scripts/setup.sh && cusg-record-imu --help
    ```
 
 ### Manual Installation (Alternative)
