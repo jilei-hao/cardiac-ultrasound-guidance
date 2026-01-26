@@ -67,9 +67,9 @@ dev = [
 ]
 
 [project.scripts]
-cug-main = "main:main"
-cug-guidance-ui = "guidance_ui:main"
-cug-record-imu = "record_imu:main"
+cusg-legacy-main = "legacy_main:main"
+cusg-guidance-ui = "guidance_ui:main"
+cusg-record = "record:main"
 
 [project.urls]
 Homepage = "https://github.com/paradigm/cardiac-ultrasound-guidance"
