@@ -12,3 +12,5 @@ else
     # Linux
     export LD_LIBRARY_PATH="$cast_api_dir:$LD_LIBRARY_PATH"
 fi
+
+echo "Clarius library path configured: $cast_api_dir"
