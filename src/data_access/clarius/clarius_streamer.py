@@ -42,6 +42,8 @@ PRINT_DEBUG_INFO = False
 def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angle, imu):
   global FRAME_QUEUE, PRINT_DEBUG_INFO
 
+  print("-- [Clarius Streamer] Received new processed image at timestamp:", timestamp)
+
   imu_object = None
   if (len(imu) > 0):
     imu_object = imu[0]
