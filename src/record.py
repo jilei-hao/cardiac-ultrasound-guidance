@@ -5,9 +5,14 @@ import os
 import numpy as np
 import cv2
 import sys
-import termios
-import tty
-import select
+
+# Cross-platform keyboard input handling
+if sys.platform == 'win32':
+  import msvcrt
+else:
+  import termios
+  import tty
+  import select
 
 def get_timestamp(preserve_date: bool) -> int:
   """Get a timestamp in nanoseconds.
@@ -99,18 +104,32 @@ def main():
 
   while True:
     def get_key():
-      fd = sys.stdin.fileno()
-      old_settings = termios.tcgetattr(fd)
-      try:
-        tty.setraw(fd)
-        [i, _, _] = select.select([sys.stdin], [], [], 0.1)
-        if i:
-          ch = sys.stdin.read(1)
-        else:
-          ch = ''
-      finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-      return ch
+      """Cross-platform keyboard input handler."""
+      if sys.platform == 'win32':
+        # Windows: use msvcrt for non-blocking keyboard input
+        if msvcrt.kbhit():
+          ch = msvcrt.getch()
+          # Handle special keys (arrows, function keys return 0 or 224 first)
+          if ch in (b'\x00', b'\xe0'):
+            msvcrt.getch()  # Read and discard the second byte
+            return ''
+          return ch.decode('utf-8', errors='ignore')
+        time.sleep(0.1)  # Small delay to prevent CPU spinning
+        return ''
+      else:
+        # Unix/macOS: use termios for raw terminal input
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+          tty.setraw(fd)
+          [i, _, _] = select.select([sys.stdin], [], [], 0.1)
+          if i:
+            ch = sys.stdin.read(1)
+          else:
+            ch = ''
+        finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
 
     if not is_recording:
       print("Press 'space' to record, 'q' to quit:")
