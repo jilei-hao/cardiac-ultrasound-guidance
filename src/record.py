@@ -50,18 +50,26 @@ def save_result(output_data, output_dir):
       cv2.imwrite(image_path, orig_gray)
 
   # create a csv file for imu data
-  imu_file_path = os.path.join(output_dir, "frame.imu.csv")
+  imu_file_path = os.path.join(output_dir, "frame.meta.csv")
   with open(imu_file_path, 'w') as imu_file:
-    imu_file.write("timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz,device_timestamp\n")
+    imu_file.write("timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz,device_timestamp,microns_per_pixel\n")
     for crnt_record in output_data:
+      timestamp_str = f"{crnt_record['timestamp']:019d}"
       device_timestamp_str = f"{crnt_record['frame'].timestamp:014d}"
       if crnt_record['frame'].imu is not None:
-        imu_file.write(f"{crnt_record['frame'].timestamp},"
+        imu_file.write(f"{timestamp_str},"
                        f"{crnt_record['frame'].imu.gx},{crnt_record['frame'].imu.gy},{crnt_record['frame'].imu.gz},"
                        f"{crnt_record['frame'].imu.ax},{crnt_record['frame'].imu.ay},{crnt_record['frame'].imu.az},"
                        f"{crnt_record['frame'].imu.mx},{crnt_record['frame'].imu.my},{crnt_record['frame'].imu.mz},"
                        f"{crnt_record['frame'].imu.qw},{crnt_record['frame'].imu.qx},{crnt_record['frame'].imu.qy},{crnt_record['frame'].imu.qz},"
-                       f"{device_timestamp_str}\n")
+                       f"{device_timestamp_str},"
+                       f"{crnt_record['frame'].microns_per_pixel}\n")
+      else:
+        print("-- Warning: No IMU data for frame at timestamp", timestamp_str)
+        imu_file.write(f"{timestamp_str},"
+                       f"0,0,0,0,0,0,0,0,0,1,0,0,0,"
+                       f"{device_timestamp_str},"
+                       f"{crnt_record['frame'].microns_per_pixel}\n")
   
   print(f"-- Data saved to {output_dir} with {len(output_data)} frames.")
 
@@ -74,11 +82,14 @@ def main():
   parser.add_argument("--duration", type=int, default=10, help="Duration to record in seconds")
   parser.add_argument("--interval", type=int, default=50, help="Interval in ms between frames")
   parser.add_argument("--preserve-date", action='store_true', default=False, help="Preserve date in timestamps")
+  parser.add_argument("--debug", action='store_true', default=False, help="Enable debug information")
 
   options = parser.parse_args()
 
-  print("-- Initializing Clarius Streamer with IP: {0}, Port: {1}".format(options.ip, options.port))
+  print(f"-- Initializing Clarius Streamer with IP: {options.ip}, Port: {options.port}")
   ClariusStreamer.configure(options.ip, options.port, 'research', 512, 512)
+  if options.debug:
+    ClariusStreamer.set_print_debug_info(True)
   ClariusStreamer.start()
 
   is_recording = False
@@ -107,7 +118,7 @@ def main():
       while not key:
         key = get_key()
       if key == ' ':
-        print("-- Recording for {0} seconds...".format(options.duration))
+        print(f"-- Recording for {options.duration} seconds...")
         start_time = time.time()
         start_timestamp = get_timestamp(options.preserve_date)
         is_recording = True

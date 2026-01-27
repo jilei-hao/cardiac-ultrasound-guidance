@@ -62,7 +62,7 @@ def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angl
     if FRAME_QUEUE.full():
       FRAME_QUEUE.get()
 
-    FRAME_QUEUE.put(FrameData(img, timestamp, imu_object))
+    FRAME_QUEUE.put(FrameData(img, timestamp, imu_object, micronsPerPixel))
   except Exception as e:
     print("Error in newProcessedImage callback:", str(e))
 
