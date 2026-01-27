@@ -36,18 +36,29 @@
    source scripts/setup.sh && cusg-guidance-ui --help
    
    # IMU recording utility
-   source scripts/setup.sh && cusg-record-imu --help
+   source scripts/setup.sh && cusg-record --help
    ```
+   Windows
+   ```
+   ! Important for Windows: Cast image streaming requires firewall exceptions for python.exe
+   ```
+   ```batch
+   @echo off
+   REM Windows batch script to run recording utility
 
-### Manual Installation (Alternative)
+   REM Set up environment
+   call scripts\setup.bat
 
-If you prefer to install dependencies manually:
-
-```bash
-conda create -n lumify-streaming python=3.12
-conda activate lumify-streaming
-pip install -r requirements.txt
-```
+   REM Run recording utility
+   REM -- duration in seconds
+   REM -- interval in milliseconds
+   cusg-record ^
+   --ip 66.66.66.160 --port 5828 ^
+   --outputdir ./output ^
+   --duration 10 ^
+   --interval 50 ^
+   --preserve-date
+   ```
 
 ## Prerequisites
 
