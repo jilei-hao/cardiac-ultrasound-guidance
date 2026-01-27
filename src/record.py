@@ -27,7 +27,7 @@ def get_timestamp(preserve_date: bool) -> int:
   return ts
 
 def save_result(output_data, output_dir):
-  output_data.sort(key=lambda x: x.timestamp)
+  output_data.sort(key=lambda x: x['timestamp'])
 
   # get the first ts as folder name
   if not output_data:
@@ -39,13 +39,13 @@ def save_result(output_data, output_dir):
 
   # for each frame, save the image with timestamp
   for i, crnt_record in enumerate(output_data):
-    timestamp_str = f"{crnt_record.timestamp:019d}"
-    device_timestamp_str = f"{crnt_record.frame.timestamp:014d}"
+    timestamp_str = f"{crnt_record['timestamp']:019d}"
+    device_timestamp_str = f"{crnt_record['frame'].timestamp:014d}"
     
     image_path = os.path.join(output_dir, f"frame_{i:04d}_{timestamp_str}.png")
 
-    if crnt_record.frame.image is not None:
-      orig_frame = np.array(crnt_record.frame.image)
+    if crnt_record['frame'].image is not None:
+      orig_frame = np.array(crnt_record['frame'].image)
       orig_gray = cv2.cvtColor(orig_frame, cv2.COLOR_BGR2GRAY)
       cv2.imwrite(image_path, orig_gray)
 
@@ -54,13 +54,13 @@ def save_result(output_data, output_dir):
   with open(imu_file_path, 'w') as imu_file:
     imu_file.write("timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz,device_timestamp\n")
     for crnt_record in output_data:
-      device_timestamp_str = f"{crnt_record.frame.timestamp:014d}"
-      if crnt_record.frame.imu is not None:
-        imu_file.write(f"{crnt_record.frame.timestamp},"
-                       f"{crnt_record.frame.imu.gx},{crnt_record.frame.imu.gy},{crnt_record.frame.imu.gz},"
-                       f"{crnt_record.frame.imu.ax},{crnt_record.frame.imu.ay},{crnt_record.frame.imu.az},"
-                       f"{crnt_record.frame.imu.mx},{crnt_record.frame.imu.my},{crnt_record.frame.imu.mz},"
-                       f"{crnt_record.frame.imu.qw},{crnt_record.frame.imu.qx},{crnt_record.frame.imu.qy},{crnt_record.frame.imu.qz},"
+      device_timestamp_str = f"{crnt_record['frame'].timestamp:014d}"
+      if crnt_record['frame'].imu is not None:
+        imu_file.write(f"{crnt_record['frame'].timestamp},"
+                       f"{crnt_record['frame'].imu.gx},{crnt_record['frame'].imu.gy},{crnt_record['frame'].imu.gz},"
+                       f"{crnt_record['frame'].imu.ax},{crnt_record['frame'].imu.ay},{crnt_record['frame'].imu.az},"
+                       f"{crnt_record['frame'].imu.mx},{crnt_record['frame'].imu.my},{crnt_record['frame'].imu.mz},"
+                       f"{crnt_record['frame'].imu.qw},{crnt_record['frame'].imu.qx},{crnt_record['frame'].imu.qy},{crnt_record['frame'].imu.qz},"
                        f"{device_timestamp_str}\n")
   
   print(f"-- Data saved to {output_dir} with {len(output_data)} frames.")
