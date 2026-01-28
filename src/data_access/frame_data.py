@@ -39,3 +39,4 @@ class FrameData:
   image: any
   timestamp: float
   imu: IMUData
+  microns_per_pixel: float

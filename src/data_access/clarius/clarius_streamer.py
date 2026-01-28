@@ -42,6 +42,9 @@ PRINT_DEBUG_INFO = False
 def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angle, imu):
   global FRAME_QUEUE, PRINT_DEBUG_INFO
 
+  if PRINT_DEBUG_INFO:
+    print("-- [Clarius Streamer] Received new processed image at timestamp:", timestamp)
+
   imu_object = None
   if (len(imu) > 0):
     imu_object = imu[0]
@@ -62,7 +65,7 @@ def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angl
     if FRAME_QUEUE.full():
       FRAME_QUEUE.get()
 
-    FRAME_QUEUE.put(FrameData(img, timestamp, imu_object))
+    FRAME_QUEUE.put(FrameData(img, timestamp, imu_object, micronsPerPixel))
   except Exception as e:
     print("Error in newProcessedImage callback:", str(e))
 
@@ -164,14 +167,20 @@ def configure(ip, port, path, width=512, height=512):
 
   CLARIUS_SETTINGS = ClariusSettings(ip, port, path, width, height)
 
-  CASTER.init(path, width, height)
+  ret =CASTER.init(path, width, height)
+  if ret:
+    print("-- [Clarius Streamer] Caster initialized with path: {0}, width: {1}, height: {2}".format(path, width, height))
+  else:
+    print("!! [Clarius Streamer] Failed to initialize Caster with path: {0}, width: {1}, height: {2}".format(path, width, height))
 
 
 def start():
   global CASTER
-  CASTER.connect(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port, "research")
-  print("-- [Clarius Streamer] Connected to probe at {0}:{1}".format(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port))
-
+  ret = CASTER.connect(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port, "research")
+  if ret:
+    print("-- [Clarius Streamer] Connected to probe at {0}:{1}".format(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port))
+  else:
+    print("!! [Clarius Streamer] Failed to connect to probe at {0}:{1}".format(CLARIUS_SETTINGS.ip, CLARIUS_SETTINGS.port))
 
 def stop():
   global CASTER
@@ -185,6 +194,8 @@ def get_frame():
   if not FRAME_QUEUE.empty():
     return FRAME_QUEUE.queue[-1]  # Access the most recent frame using the `queue` attribute
   else:
+    if PRINT_DEBUG_INFO:
+      print("-- [Clarius Streamer] get_frame(): No frame available in queue")
     return None
   
 
