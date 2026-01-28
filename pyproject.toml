@@ -51,6 +51,7 @@ dependencies = [
     # Utilities
     "requests",
     "python-dotenv>=1.0.0",
+    "pynput",
     
     # macOS window management
     "pyobjc==10.3 ; sys_platform == 'darwin'",
@@ -70,6 +71,7 @@ dev = [
 cusg-legacy-main = "legacy_main:main"
 cusg-guidance-ui = "guidance_ui:main"
 cusg-record = "record:main"
+cusg-record-async = "record_async:main"
 test-clarius-windows = "data_access.clarius.test_with_qt:main"
 
 [project.urls]
