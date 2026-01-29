@@ -52,6 +52,7 @@ dependencies = [
     "requests",
     "python-dotenv>=1.0.0",
     "pynput",
+    "openvr",
     
     # macOS window management
     "pyobjc==10.3 ; sys_platform == 'darwin'",

@@ -12,6 +12,12 @@ import queue
 
 from pynput import keyboard
 
+try:
+  import openvr
+  HAS_OPENVR = True
+except ImportError:
+  HAS_OPENVR = False
+
 
 @dataclass
 class FrameWriteRequest:
@@ -25,9 +31,13 @@ class FrameWriteRequest:
 class KeyboardHandler:
   """Handles keyboard input with support for detecting held keys."""
 
+  # Keys reserved for control actions (not available as reference labels)
+  _RESERVED_KEYS = {'q'}
+
   def __init__(self):
     self._pressed_keys = set()
     self._key_events = []  # Queue of key press events for toggle detection
+    self._reference_key = ""  # Most recently pressed alphanumeric reference key
 
     # Start the keyboard listener
     self._listener = keyboard.Listener(
@@ -49,10 +59,12 @@ class KeyboardHandler:
     elif key == keyboard.Key.enter:
       self._key_events.append('enter')
     elif key_char:
-      self._pressed_keys.add(key_char.lower())
-      # Track 'q' as an event for quitting
-      if key_char.lower() == 'q':
+      ch = key_char.lower()
+      self._pressed_keys.add(ch)
+      if ch == 'q':
         self._key_events.append('q')
+      elif ch not in self._RESERVED_KEYS:
+        self._reference_key = ch
 
   def _on_release(self, key):
     """Called when a key is released."""
@@ -65,11 +77,18 @@ class KeyboardHandler:
     if key == keyboard.Key.space:
       self._pressed_keys.discard('space')
     elif key_char:
-      self._pressed_keys.discard(key_char.lower())
+      ch = key_char.lower()
+      self._pressed_keys.discard(ch)
+      if ch == self._reference_key:
+        self._reference_key = ""
 
   def is_held(self, key_name: str) -> bool:
     """Check if a key is currently held down."""
     return key_name.lower() in self._pressed_keys
+
+  def get_reference_label(self) -> str:
+    """Get the currently held reference label, or "" if none."""
+    return self._reference_key
 
   def get_event(self) -> Optional[str]:
     """Get the next key event (for toggle keys like enter, q)."""
@@ -100,6 +119,78 @@ def get_timestamp(preserve_date: bool) -> int:
   return ts
 
 
+def init_vr_tracking():
+  """Initialize OpenVR and find the first generic tracker.
+
+  Returns:
+      Tuple of (vr_system, tracker_device_index) or (None, None) on failure.
+  """
+  if not HAS_OPENVR:
+    print("-- Warning: openvr not installed, tracking disabled")
+    return None, None
+
+  try:
+    vr_system = openvr.init(openvr.VRApplication_Other)
+  except openvr.OpenVRError as e:
+    print(f"-- Warning: Could not initialize OpenVR: {e}")
+    print("-- Tracking disabled. Make sure SteamVR is running.")
+    return None, None
+
+  print("-- Connected to SteamVR")
+
+  # Find the first generic tracker
+  for i in range(openvr.k_unMaxTrackedDeviceCount):
+    device_class = vr_system.getTrackedDeviceClass(i)
+    if device_class == openvr.TrackedDeviceClass_GenericTracker:
+      serial = vr_system.getStringTrackedDeviceProperty(
+        i, openvr.Prop_SerialNumber_String
+      )
+      print(f"-- Found tracker: Device {i} ({serial})")
+      return vr_system, i
+
+  print("-- Warning: No trackers found, tracking disabled")
+  openvr.shutdown()
+  return None, None
+
+
+def get_tracker_pose(vr_system, device_index: int) -> Optional[list]:
+  """
+  Get the flattened 12-element pose vector for a tracked device.
+
+  The OpenVR 3x4 matrix is column-major (columns are axes)
+      m[0][0] m[0][1] m[0][2] m[0][3]     AXx  AYx  AZx  Tx
+      m[1][0] m[1][1] m[1][2] m[1][3]  =  AXy  AYy  AZy  Ty
+      m[2][0] m[2][1] m[2][2] m[2][3]     AXz  AYz  AZz  Tz
+
+  Returns the rotation (3x3 flattened row-by-row) followed by translation:
+      [r00, r01, r02, r10, r11, r12, r20, r21, r22, tx, ty, tz]
+
+  Returns None if the pose is not valid.
+  """
+  
+  poses = vr_system.getDeviceToAbsoluteTrackingPose(
+    openvr.TrackingUniverseStanding, 0,
+    openvr.k_unMaxTrackedDeviceCount
+  )
+  pose = poses[device_index]
+
+  if not pose.bPoseIsValid:
+    return None
+
+  m = pose.mDeviceToAbsoluteTracking
+
+  # Flatten rotation (3x3) row-by-row, then translation
+  return [
+    m[0][0], m[0][1], m[0][2],
+    m[1][0], m[1][1], m[1][2],
+    m[2][0], m[2][1], m[2][2],
+    m[0][3], m[1][3], m[2][3]
+  ]
+
+
+POSE_ZERO = [0.0] * 12
+
+
 def writer_process(frame_queue: Queue, shutdown_event: Event, writer_id: int):
   """Writer process: pulls frames from queue and writes to disk.
 
@@ -116,7 +207,7 @@ def writer_process(frame_queue: Queue, shutdown_event: Event, writer_id: int):
       timestamp_str = f"{request.timestamp:019d}"
       image_path = os.path.join(
         request.output_dir,
-        f"frame_{request.seq_num:04d}_{timestamp_str}.png"
+        f"frame_{request.seq_num:06d}_{timestamp_str}.png"
       )
 
       if request.image is not None:
@@ -126,6 +217,9 @@ def writer_process(frame_queue: Queue, shutdown_event: Event, writer_id: int):
       continue
     except Exception as e:
       print(f"Writer {writer_id} error: {e}")
+
+
+POSE_CSV_COLUMNS = "r00,r01,r02,r10,r11,r12,r20,r21,r22,tx,ty,tz"
 
 
 def write_metadata_csv(metadata_list: list, output_dir: str):
@@ -141,11 +235,15 @@ def write_metadata_csv(metadata_list: list, output_dir: str):
   csv_path = os.path.join(output_dir, "frame.meta.csv")
   with open(csv_path, 'w') as f:
     f.write("timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz,"
-            "device_timestamp,microns_per_pixel,valid,reference\n")
+            f"device_timestamp,microns_per_pixel,valid,reference,{POSE_CSV_COLUMNS}\n")
 
     for meta in metadata_list:
       timestamp_str = f"{meta['timestamp']:019d}"
       device_timestamp_str = f"{meta['device_timestamp']:014d}"
+      valid_int = int(meta['valid'])
+      reference = meta['reference']
+      pose = meta['pose']
+      pose_str = ",".join(f"{v:.6f}" for v in pose)
 
       if meta['imu'] is not None:
         imu = meta['imu']
@@ -156,14 +254,14 @@ def write_metadata_csv(metadata_list: list, output_dir: str):
                 f"{imu['qw']},{imu['qx']},{imu['qy']},{imu['qz']},"
                 f"{device_timestamp_str},"
                 f"{meta['microns_per_pixel']},"
-                f"{meta['valid']},{meta['reference']}\n")
+                f"{valid_int},{reference},{pose_str}\n")
       else:
         print(f"-- Warning: No IMU data for frame at timestamp {timestamp_str}")
         f.write(f"{timestamp_str},"
                 f"0,0,0,0,0,0,0,0,0,1,0,0,0,"
                 f"{device_timestamp_str},"
                 f"{meta['microns_per_pixel']},"
-                f"{meta['valid']},{meta['reference']}\n")
+                f"{valid_int},{reference},{pose_str}\n")
 
 
 def main():
@@ -182,14 +280,25 @@ def main():
                       help="Preserve date in timestamps")
   parser.add_argument("--debug", action='store_true', default=False,
                       help="Enable debug information")
+  parser.add_argument("--enable-tracking", action='store_true', default=True,
+                      help="Enable VR tracker pose recording (default: True)")
+  parser.add_argument("--disable-tracking", action='store_true', default=False,
+                      help="Disable VR tracker pose recording")
 
   options = parser.parse_args()
+  tracking_enabled = options.enable_tracking and not options.disable_tracking
 
   print(f"-- Initializing Clarius Streamer with IP: {options.ip}, Port: {options.port}")
   ClariusStreamer.configure(options.ip, options.port, 'research', 512, 512)
   if options.debug:
     ClariusStreamer.set_print_debug_info(True)
   ClariusStreamer.start()
+
+  # Initialize VR tracking
+  vr_system = None
+  tracker_index = None
+  if tracking_enabled:
+    vr_system, tracker_index = init_vr_tracking()
 
   # Initialize keyboard handler
   kb_handler = KeyboardHandler()
@@ -218,10 +327,10 @@ def main():
   frame_count = 0
 
   print("Controls:")
-  print("  [Enter] - Start/stop recording")
-  print("  [Space] - Hold for 'valid' label")
-  print("  [F]     - Hold for 'reference' label")
-  print("  [Q]     - Quit")
+  print("  [Enter]       - Start/stop recording")
+  print("  [Space]       - Hold for 'valid' label")
+  print("  [a-p, r-z, 0-9] - Hold for reference label (key = class)")
+  print("  [Q]           - Quit")
   print("")
   print("Ready. Press [Enter] to start recording...")
 
@@ -272,11 +381,20 @@ def main():
       if is_recording:
         # Get current key states for labeling
         valid = kb_handler.is_held('space')
-        reference = kb_handler.is_held('f')
+        reference = kb_handler.get_reference_label()
 
         # Fetch frame
         frame = ClariusStreamer.get_frame()
         timestamp = get_timestamp(options.preserve_date)
+
+        # Get tracker pose
+        pose = POSE_ZERO
+        if vr_system is not None:
+          tracker_pose = get_tracker_pose(vr_system, tracker_index)
+          if tracker_pose is not None:
+            pose = tracker_pose
+          else:
+            print(f"-- Warning: Invalid tracker pose at frame {seq_num}")
 
         # Convert to grayscale numpy array
         if frame.image is not None:
@@ -302,7 +420,8 @@ def main():
           'microns_per_pixel': frame.microns_per_pixel,
           'imu': imu_dict,
           'valid': valid,
-          'reference': reference
+          'reference': reference,
+          'pose': pose
         })
 
         # Queue image for writing
@@ -347,6 +466,10 @@ def main():
 
     # Stop Clarius streamer
     ClariusStreamer.stop()
+
+    # Shutdown OpenVR
+    if vr_system is not None:
+      openvr.shutdown()
 
     print("-- Done.")
 
