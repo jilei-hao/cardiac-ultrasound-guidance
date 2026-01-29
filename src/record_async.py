@@ -2,6 +2,8 @@ import data_access.clarius.clarius_streamer as ClariusStreamer
 import argparse
 import time
 import os
+import json
+from datetime import datetime
 import numpy as np
 import cv2
 import multiprocessing as mp
@@ -119,22 +121,41 @@ def get_timestamp(preserve_date: bool) -> int:
   return ts
 
 
+def make_recording_dir(base_dir: str) -> str:
+  """Create a timestamped recording directory.
+
+  Directory name format: usgr_invivo_YYYY-MM-DD--HH-MM-SS
+
+  Args:
+      base_dir: Parent directory for recordings.
+  Returns:
+      str: Path to the created recording directory.
+  """
+  now = datetime.now()
+  dirname = now.strftime("usgr_invivo_%Y-%m-%d--%H-%M-%S")
+  recording_dir = os.path.join(base_dir, dirname)
+  os.makedirs(recording_dir, exist_ok=True)
+  os.makedirs(os.path.join(recording_dir, "images"), exist_ok=True)
+  return recording_dir
+
+
 def init_vr_tracking():
   """Initialize OpenVR and find the first generic tracker.
 
   Returns:
-      Tuple of (vr_system, tracker_device_index) or (None, None) on failure.
+      Tuple of (vr_system, tracker_device_index, tracker_serial)
+      or (None, None, None) on failure.
   """
   if not HAS_OPENVR:
     print("-- Warning: openvr not installed, tracking disabled")
-    return None, None
+    return None, None, None
 
   try:
     vr_system = openvr.init(openvr.VRApplication_Other)
   except openvr.OpenVRError as e:
     print(f"-- Warning: Could not initialize OpenVR: {e}")
     print("-- Tracking disabled. Make sure SteamVR is running.")
-    return None, None
+    return None, None, None
 
   print("-- Connected to SteamVR")
 
@@ -146,11 +167,11 @@ def init_vr_tracking():
         i, openvr.Prop_SerialNumber_String
       )
       print(f"-- Found tracker: Device {i} ({serial})")
-      return vr_system, i
+      return vr_system, i, serial
 
   print("-- Warning: No trackers found, tracking disabled")
   openvr.shutdown()
-  return None, None
+  return None, None, None
 
 
 def get_tracker_pose(vr_system, device_index: int) -> Optional[list]:
@@ -167,7 +188,7 @@ def get_tracker_pose(vr_system, device_index: int) -> Optional[list]:
 
   Returns None if the pose is not valid.
   """
-  
+
   poses = vr_system.getDeviceToAbsoluteTrackingPose(
     openvr.TrackingUniverseStanding, 0,
     openvr.k_unMaxTrackedDeviceCount
@@ -203,10 +224,10 @@ def writer_process(frame_queue: Queue, shutdown_event: Event, writer_id: int):
     try:
       request: FrameWriteRequest = frame_queue.get(timeout=0.1)
 
-      # Write image
+      # Write image to images/ subdirectory
       timestamp_str = f"{request.timestamp:019d}"
       image_path = os.path.join(
-        request.output_dir,
+        request.output_dir, "images",
         f"frame_{request.seq_num:06d}_{timestamp_str}.png"
       )
 
@@ -234,10 +255,11 @@ def write_metadata_csv(metadata_list: list, output_dir: str):
 
   csv_path = os.path.join(output_dir, "frame.meta.csv")
   with open(csv_path, 'w') as f:
-    f.write("timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz,"
-            f"device_timestamp,microns_per_pixel,valid,reference,{POSE_CSV_COLUMNS}\n")
+    f.write("index,timestamp,gx,gy,gz,ax,ay,az,mx,my,mz,qw,qx,qy,qz,"
+            f"clarius_timestamp,microns_per_pixel,valid,reference,{POSE_CSV_COLUMNS}\n")
 
     for meta in metadata_list:
+      seq_num = meta['seq_num']
       timestamp_str = f"{meta['timestamp']:019d}"
       device_timestamp_str = f"{meta['device_timestamp']:014d}"
       valid_int = int(meta['valid'])
@@ -247,7 +269,7 @@ def write_metadata_csv(metadata_list: list, output_dir: str):
 
       if meta['imu'] is not None:
         imu = meta['imu']
-        f.write(f"{timestamp_str},"
+        f.write(f"{seq_num},{timestamp_str},"
                 f"{imu['gx']},{imu['gy']},{imu['gz']},"
                 f"{imu['ax']},{imu['ay']},{imu['az']},"
                 f"{imu['mx']},{imu['my']},{imu['mz']},"
@@ -257,11 +279,33 @@ def write_metadata_csv(metadata_list: list, output_dir: str):
                 f"{valid_int},{reference},{pose_str}\n")
       else:
         print(f"-- Warning: No IMU data for frame at timestamp {timestamp_str}")
-        f.write(f"{timestamp_str},"
+        f.write(f"{seq_num},{timestamp_str},"
                 f"0,0,0,0,0,0,0,0,0,1,0,0,0,"
                 f"{device_timestamp_str},"
                 f"{meta['microns_per_pixel']},"
                 f"{valid_int},{reference},{pose_str}\n")
+
+
+def write_recording_metadata(output_dir: str, operator_name: str, patient_name: str,
+                             tracker_serial: Optional[str]):
+  """Write per-recording metadata to a JSON file.
+
+  Args:
+      output_dir: Recording directory
+      operator_name: Name of the operator
+      patient_name: Name of the patient
+      tracker_serial: Serial number of the VR tracker, or None if not used
+  """
+  metadata = {
+    "operator": operator_name,
+    "patient": patient_name,
+    "tracking_device": tracker_serial if tracker_serial else "none",
+    "recording_time": datetime.now().isoformat()
+  }
+
+  json_path = os.path.join(output_dir, "recording.meta.json")
+  with open(json_path, 'w') as f:
+    json.dump(metadata, f, indent=2)
 
 
 def main():
@@ -288,6 +332,18 @@ def main():
   options = parser.parse_args()
   tracking_enabled = options.enable_tracking and not options.disable_tracking
 
+  # Prompt for operator and patient names
+  print("=== Recording Session Setup ===")
+  operator_name = input("Operator name: ").strip()
+  patient_name = input("Patient name: ").strip()
+  if not operator_name:
+    print("-- Error: Operator name is required.")
+    return
+  if not patient_name:
+    print("-- Error: Patient name is required.")
+    return
+  print("")
+
   print(f"-- Initializing Clarius Streamer with IP: {options.ip}, Port: {options.port}")
   ClariusStreamer.configure(options.ip, options.port, 'research', 512, 512)
   if options.debug:
@@ -297,8 +353,9 @@ def main():
   # Initialize VR tracking
   vr_system = None
   tracker_index = None
+  tracker_serial = None
   if tracking_enabled:
-    vr_system, tracker_index = init_vr_tracking()
+    vr_system, tracker_index, tracker_serial = init_vr_tracking()
 
   # Initialize keyboard handler
   kb_handler = KeyboardHandler()
@@ -327,10 +384,10 @@ def main():
   frame_count = 0
 
   print("Controls:")
-  print("  [Enter]       - Start/stop recording")
-  print("  [Space]       - Hold for 'valid' label")
-  print("  [a-p, r-z, 0-9] - Hold for reference label (key = class)")
-  print("  [Q]           - Quit")
+  print("  [Enter]          - Start/stop recording")
+  print("  [Space]          - Hold for 'valid' label")
+  print("  [a-p, r-z, 0-9]  - Hold for reference label (key = class)")
+  print("  [Q]              - Quit")
   print("")
   print("Ready. Press [Enter] to start recording...")
 
@@ -350,9 +407,7 @@ def main():
           seq_num = 0
           frame_count = 0
           metadata_buffer = []
-          start_timestamp = get_timestamp(options.preserve_date)
-          output_dir = os.path.join(options.outputdir, str(start_timestamp))
-          os.makedirs(output_dir, exist_ok=True)
+          output_dir = make_recording_dir(options.outputdir)
           print(f"-- Recording started. Output: {output_dir}")
         else:
           # Stop recording
@@ -367,9 +422,11 @@ def main():
           # Give writers a moment to finish any in-flight writes
           time.sleep(0.3)
 
-          # Write CSV from local metadata buffer
+          # Write CSV and JSON metadata
           if metadata_buffer:
             write_metadata_csv(metadata_buffer, output_dir)
+            write_recording_metadata(output_dir, operator_name, patient_name,
+                                     tracker_serial)
             print(f"-- Saved {len(metadata_buffer)} frames to {output_dir}")
           else:
             print("-- No frames to save.")
