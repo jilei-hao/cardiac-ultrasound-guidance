@@ -35,7 +35,10 @@
    # Guidance UI application  
    source scripts/setup.sh && cusg-guidance-ui --help
    
-   # IMU recording utility
+   # Async recording utility (with VR tracking and labeling)
+   source scripts/setup.sh && cusg-record-async --help
+
+   # Legacy recording utility
    source scripts/setup.sh && cusg-record --help
    ```
    Windows
@@ -44,19 +47,19 @@
    ```
    ```batch
    @echo off
-   REM Windows batch script to run recording utility
+   REM Windows batch script to run async recording utility
 
    REM Set up environment
    call scripts\setup.bat
 
-   REM Run recording utility
-   REM -- duration in seconds
+   REM Run async recording utility
    REM -- interval in milliseconds
-   cusg-record ^
+   REM -- writers: number of parallel writer processes
+   cusg-record-async ^
    --ip 66.66.66.160 --port 5828 ^
-   --outputdir ./output ^
-   --duration 10 ^
+   --outputdir .\output ^
    --interval 50 ^
+   --writers 1 ^
    --preserve-date
    ```
 
@@ -75,7 +78,7 @@ Go to `documentation/run_main.md` for instructions running the main program for 
 
 ### Exam Recording Utility
 
-Go to `documentation/run_recording.md` for instructions running the recording utility for capturing the clarius frames with imu data
+Go to `documentation/run_recording.md` for instructions running the async recording utility for capturing clarius frames with IMU data, VR tracking, and on-the-fly labeling
 
 ### Clarius Setup
 

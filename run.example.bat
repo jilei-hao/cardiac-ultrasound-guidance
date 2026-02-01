@@ -10,7 +10,7 @@ REM -- interval in milliseconds
 REM -- writers: number of parallel writer processes
 cusg-record-async ^
   --ip 66.66.66.160 --port 5828 ^
-  --outputdir ./output ^
+  --outputdir .\output ^
   --interval 50 ^
   --writers 1 ^
   --preserve-date
