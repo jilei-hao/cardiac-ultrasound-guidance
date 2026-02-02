@@ -278,7 +278,7 @@ def write_metadata_csv(metadata_list: list, output_dir: str):
                 f"{meta['microns_per_pixel']},"
                 f"{valid_int},{reference},{pose_str}\n")
       else:
-        print(f"-- Warning: No IMU data for frame at timestamp {timestamp_str}")
+        # print(f"-- Warning: No IMU data for frame at timestamp {timestamp_str}")
         f.write(f"{seq_num},{timestamp_str},"
                 f"0,0,0,0,0,0,0,0,0,1,0,0,0,"
                 f"{device_timestamp_str},"
