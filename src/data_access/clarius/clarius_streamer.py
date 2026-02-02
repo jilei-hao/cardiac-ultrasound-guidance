@@ -61,7 +61,7 @@ def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angl
     else:
       img = Image.frombytes("L", (width, height), image)
 
-    LATEST_FRAME = FrameData(img, timestamp, imu_object, micronsPerPixel)
+    LATEST_FRAME = FrameData(img, timestamp, micronsPerPixel, imu=imu_object)
   except Exception as e:
     print("Error in newProcessedImage callback:", str(e))
 

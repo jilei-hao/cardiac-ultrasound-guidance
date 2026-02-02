@@ -2,7 +2,7 @@ import os
 import time
 import pandas as pd
 from PIL import Image
-from ..frame_data import FrameData, TrackerData
+from ..frame_data import FrameData, TrackerData, IMUData
 from ..frame_data_input import FrameDataInput
 import bisect
 
@@ -95,8 +95,8 @@ class FrameDataSimulator(FrameDataInput):
         """
         if not self._is_started:
             print("🛑 Error: Simulator not started. Call start() first.")
-            return FrameData(None, None, None)
-        
+            return FrameData(None, None, 0)
+
         if index is not None:
             self.current_frame_index = index
         elif relative_time is not None:
@@ -128,12 +128,11 @@ class FrameDataSimulator(FrameDataInput):
                 row = self.frame_data[self.current_frame_index]
                 tracker_data = TrackerData.from_dict(row)  # Convert to TrackerData instance
                         
-            # return FrameData(image, timestamp, frame_data)
-            return FrameData(image, row['timestamp'], tracker_data, microns_per_pixel=0)
+            return FrameData(image, row['timestamp'], microns_per_pixel=0, tracker=tracker_data)
             
         except Exception as e:
             print(f"🛑 Error loading frame {self.current_frame_index}: {str(e)}")
-            return FrameData(None, None, None, microns_per_pixel=0)
+            return FrameData(None, None, 0)
     
     def reset(self):
         """Reset the simulator to the beginning of the sequence."""
