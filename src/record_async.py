@@ -383,6 +383,12 @@ def main():
   metadata_buffer = []  # Kept in main process
   frame_count = 0
 
+  # Stale frame detection
+  STALE_THRESHOLD = 4
+  last_device_timestamp = None
+  stale_repeat_count = 0
+  is_stale = False
+
   print("Controls:")
   print("  [Enter]          - Start/stop recording")
   print("  [Space]          - Hold for 'valid' label")
@@ -391,8 +397,12 @@ def main():
   print("")
   print("Ready. Press [Enter] to start recording...")
 
+  interval_sec = options.interval / 1000.0
+
   try:
     while True:
+      cycle_start = time.perf_counter()
+
       # Check for key events
       event = kb_handler.get_event()
 
@@ -407,6 +417,9 @@ def main():
           seq_num = 0
           frame_count = 0
           metadata_buffer = []
+          last_device_timestamp = None
+          stale_repeat_count = 0
+          is_stale = False
           output_dir = make_recording_dir(options.outputdir)
           print(f"-- Recording started. Output: {output_dir}")
         else:
@@ -436,12 +449,41 @@ def main():
 
       # If recording, fetch and queue frames
       if is_recording:
+        # Fetch frame
+        frame = ClariusStreamer.get_frame()
+
+        if frame is None:
+          elapsed = time.perf_counter() - cycle_start
+          remaining = interval_sec - elapsed
+          if remaining > 0:
+            time.sleep(remaining)
+          continue
+
+        # Stale frame detection: track repeated device timestamps
+        if frame.timestamp == last_device_timestamp:
+          stale_repeat_count += 1
+          if stale_repeat_count >= STALE_THRESHOLD:
+            if not is_stale:
+              is_stale = True
+              print(f"-- Warning: Stale frames detected (device timestamp {frame.timestamp} "
+                    f"repeated {stale_repeat_count}+ times), rejecting until new frame arrives")
+            elapsed = time.perf_counter() - cycle_start
+            remaining = interval_sec - elapsed
+            if remaining > 0:
+              time.sleep(remaining)
+            continue
+        else:
+          if is_stale:
+            print(f"-- New frame received (device timestamp {frame.timestamp}), "
+                  f"resuming recording after {stale_repeat_count} stale frames")
+          last_device_timestamp = frame.timestamp
+          stale_repeat_count = 0
+          is_stale = False
+
         # Get current key states for labeling
         valid = kb_handler.is_held('space')
         reference = kb_handler.get_reference_label()
 
-        # Fetch frame
-        frame = ClariusStreamer.get_frame()
         timestamp = get_timestamp(options.preserve_date)
 
         # Get tracker pose
@@ -498,8 +540,11 @@ def main():
         if qsize > 100 and qsize % 50 == 0:
           print(f"-- Warning: frame queue size is {qsize}")
 
-      # Sleep for the specified interval
-      time.sleep(options.interval / 1000.0)
+      # Sleep for the remaining interval to maintain consistent cycle timing
+      elapsed = time.perf_counter() - cycle_start
+      remaining = interval_sec - elapsed
+      if remaining > 0:
+        time.sleep(remaining)
 
   except KeyboardInterrupt:
     print("\n-- Interrupted by user")

@@ -1,6 +1,5 @@
 import data_access.clarius.pyclariuscast as pyclariuscast
 from PIL import Image
-import queue
 from data_access.frame_data import FrameData
 from pathlib import Path
 
@@ -14,9 +13,9 @@ class ClariusSettings:
 
 ## Global Variables Section ======================
 
-# Global queue to store frames
-FRAME_QUEUE = queue.Queue(maxsize=10)
- 
+# Most recent frame from the probe (set by callback, read by get_frame)
+LATEST_FRAME = None
+
 # Global Caster Object
 CASTER = None
 
@@ -40,7 +39,7 @@ PRINT_DEBUG_INFO = False
 # @param angle acquisition angle for volumetric data
 # @param imu inertial data tagged with the frame
 def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angle, imu):
-  global FRAME_QUEUE, PRINT_DEBUG_INFO
+  global LATEST_FRAME, PRINT_DEBUG_INFO
 
   if PRINT_DEBUG_INFO:
     print("-- [Clarius Streamer] Received new processed image at timestamp:", timestamp)
@@ -62,14 +61,9 @@ def newProcessedImage(image, width, height, sz, micronsPerPixel, timestamp, angl
     else:
       img = Image.frombytes("L", (width, height), image)
 
-    if FRAME_QUEUE.full():
-      FRAME_QUEUE.get()
-
-    FRAME_QUEUE.put(FrameData(img, timestamp, imu_object, micronsPerPixel))
+    LATEST_FRAME = FrameData(img, timestamp, imu_object, micronsPerPixel)
   except Exception as e:
     print("Error in newProcessedImage callback:", str(e))
-
-  return
 
 
 ## called when a new raw image is streamed
@@ -189,14 +183,7 @@ def stop():
 
 
 def get_frame():
-  global FRAME_QUEUE
-
-  if not FRAME_QUEUE.empty():
-    return FRAME_QUEUE.queue[-1]  # Access the most recent frame using the `queue` attribute
-  else:
-    if PRINT_DEBUG_INFO:
-      print("-- [Clarius Streamer] get_frame(): No frame available in queue")
-    return None
+  return LATEST_FRAME
   
 
 def set_print_debug_info(debug: bool):
@@ -206,66 +193,6 @@ def set_print_debug_info(debug: bool):
     print("-- [Clarius Streamer] Debugging information enabled")
   else:
     print("-- [Clarius Streamer] Debugging information disabled")
-
-
-# class ClariusStreamer(FrameDataInput):
-#   """
-#   Clarius ultrasound probe streamer implementation of FrameDataInput.
-#   Wraps the global functions into a class-based interface.
-#   """
-  
-#   def __init__(self, ip: str, port: int, path: str, width: int = 512, height: int = 512):
-#     """
-#     Initialize the Clarius streamer.
-    
-#     Args:
-#         ip: IP address of the Clarius probe
-#         port: Port number for connection
-#         path: Path for the connection (typically 'research')
-#         width: Image width in pixels
-#         height: Image height in pixels
-#     """
-#     self.ip = ip
-#     self.port = port
-#     self.path = path
-#     self.width = width
-#     self.height = height
-#     self._configured = False
-
-#     # Add the clarius library path to system library paths
-#     clarius_lib_path = Path(__file__).parent.absolute()
-#     if sys.platform == "linux" or sys.platform == "linux2":
-#       os.environ["LD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
-#     elif sys.platform == "darwin":
-#       os.environ["DYLD_LIBRARY_PATH"] = str(clarius_lib_path) + os.pathsep + os.environ.get("DYLD_LIBRARY_PATH", "")
-  
-#   def start(self):
-#     """Initialize and start the Clarius probe connection."""
-#     if not self._configured:
-#       configure(self.ip, self.port, self.path, self.width, self.height)
-#       self._configured = True
-#     start()
-  
-#   def stop(self):
-#     """Stop the Clarius probe connection."""
-#     stop()
-#     self._configured = False
-  
-#   def get_frame(self) -> FrameData:
-#     """
-#     Get the most recent frame from the Clarius probe.
-    
-#     Returns:
-#         FrameData: Frame data with image, timestamp, and IMU data
-#     """
-#     frame = get_frame()
-#     if frame is None:
-#       return FrameData(None, None, None)
-#     return frame
-  
-#   def set_debug_info(self, debug: bool):
-#     """Enable or disable debug information printing."""
-#     set_print_debug_info(debug)
 
 
 if __name__ == "__main__":
