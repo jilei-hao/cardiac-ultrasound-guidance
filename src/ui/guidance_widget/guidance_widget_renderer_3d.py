@@ -10,56 +10,81 @@ import time
 import cv2
 from ..image_helpers import overlay_color_legend
 from scipy.spatial.transform import Rotation as R
-from typing import Optional
+from typing import Optional, Union
 
 from .guidance_widget_renderer import GuidanceWidgetRenderer
 from ..generic_3d_renderer import (
     Generic3DRenderer,
     create_translation_matrix,
     create_rotation_matrix,
-    quaternion_to_matrix
+    quaternion_to_matrix,
 )
 
 
 class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     """
-    3D guidance widget renderer with probe mesh and coordinate axes visualization.
+    3D guidance widget renderer with probe mesh and coordinate axes
+    visualization. All scene coordinates are in meters.
     """
-    
+
     def __init__(self, probe_path: str,
                  background_color=(0.1, 0.1, 0.15, 1.0),
-                 scale_factor=3.0,
                  wireframe=False,
                  window_size=(640, 480),
                  render_mode='fullscreen',
                  rotation_amplification=3.0,
                  legend_image_path: str = "",
+                 probe_units: Union[str, float] = 'mm',
+                 axes_length_m: float = 0.12,
+                 axes_radius_m: float = 0.003,
+                 camera_distance_m: Optional[float] = None,
+                 camera_azimuth_deg: float = 135.0,
+                 camera_elevation_deg: float = 22.0,
+                 probe_origin_m: tuple = (0.0, 0.0, 0.0),
                  **kwargs):
         """
         Initialize 3D guidance widget renderer.
-        
+
         Args:
-            probe_path: Path to the probe STL file
-            background_color: Background color as RGBA tuple
-            scale_factor: Scaling factor for probe and axes size
-            wireframe: Whether to render in wireframe mode
-            window_size: Window dimensions (width, height)
-            render_mode: Rendering mode ('fullscreen' or 'overlay')
-            rotation_amplification: Amplification factor for rotation prediction
-            **kwargs: Additional configuration parameters
+            probe_path: Path to the probe STL file.
+            background_color: Background color as RGBA tuple.
+            wireframe: Whether to render in wireframe mode.
+            window_size: Window dimensions (width, height) in pixels.
+            render_mode: 'fullscreen' or 'overlay'.
+            rotation_amplification: Amplification factor for rotation
+                prediction.
+            legend_image_path: Optional path to a legend image overlay.
+            probe_units: Native unit of the probe STL ('mm', 'cm', 'dm',
+                'm', 'in', or a meters-per-unit float). Default 'mm'.
+            axes_length_m: Length of each coordinate-axis shaft in meters.
+            axes_radius_m: Shaft radius of each coordinate axis in meters.
+            camera_distance_m: Camera distance from the scene origin in
+                meters. If None, auto-fitted from the scene AABB.
+            camera_azimuth_deg: Camera azimuth (rotation around +Y axis)
+                in degrees.
+            camera_elevation_deg: Camera elevation (pitch above the XZ
+                plane) in degrees.
+            probe_origin_m: Reserved translation for positional tracking;
+                currently defaults to the origin.
+            **kwargs: Additional configuration parameters.
         """
         super().__init__(probe_path, **kwargs)
-        
-        # Store 3D-specific parameters
+
         self.background_color = background_color
-        self.scale_factor = scale_factor
         self.wireframe = wireframe
         self.rotation_amplification = rotation_amplification
         self.window_size = window_size
         self.render_mode = render_mode
         self.legend_image_path = legend_image_path
-        
-        # Initialize renderer components
+
+        self.probe_units = probe_units
+        self.axes_length_m = axes_length_m
+        self.axes_radius_m = axes_radius_m
+        self.camera_distance_m = camera_distance_m
+        self.camera_azimuth_deg = camera_azimuth_deg
+        self.camera_elevation_deg = camera_elevation_deg
+        self.probe_origin_m = np.asarray(probe_origin_m, dtype=float)
+
         self.renderer = None
         self.probe_mesh = None
         self.axes = None
@@ -67,10 +92,8 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_pose = None
         self.camera_pos = None
 
-
         self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
-        # Initialize the 3D renderer
         self._initialize_renderer()
     
     def _initialize_renderer(self):
@@ -108,37 +131,48 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             raise RuntimeError(f"Failed to initialize 3D renderer: {e}")
     
     def _load_probe_mesh(self):
-        """Load probe mesh from STL file."""
+        """Load probe mesh from STL file and convert to meters."""
+        fallback_radius_m = 0.022
+        fallback_height_m = 0.15
+
         if os.path.exists(self.probe_path):
             print(f"Loading probe STL: {self.probe_path}")
             self.probe_mesh = self.renderer.load_mesh_from_file(
-                self.probe_path, 
-                scale=0.01 * self.scale_factor, 
-                center=True
+                self.probe_path,
+                source_units=self.probe_units,
+                center=True,
             )
-            if self.probe_mesh is None:
+            if self.probe_mesh is not None:
+                diag = float(np.linalg.norm(self.probe_mesh.extents))
+                if not (0.02 <= diag <= 0.40):
+                    print(
+                        f"⚠️  Probe mesh bbox diagonal {diag:.3f} m is outside "
+                        f"[0.02, 0.40] m — asset may be mislabeled "
+                        f"(probe_units={self.probe_units})."
+                    )
+            else:
                 print("Failed to load probe STL, using capsule fallback")
                 self.probe_mesh = trimesh.creation.capsule(
-                    radius=0.2 * self.scale_factor, 
-                    height=2.0 * self.scale_factor
+                    radius=fallback_radius_m,
+                    height=fallback_height_m,
                 )
         else:
             print(f"Probe STL not found: {self.probe_path}, using capsule")
             self.probe_mesh = trimesh.creation.capsule(
-                radius=0.2 * self.scale_factor, 
-                height=2.0 * self.scale_factor
+                radius=fallback_radius_m,
+                height=fallback_height_m,
             )
     
     def _create_coordinate_axes(self):
-        """Create coordinate axes cylinders."""
+        """Create coordinate axes cylinders (sizes in meters)."""
         self.axes = self._create_axes_cylinders(
-            length=1.2 * self.scale_factor, 
-            radius=0.02 * self.scale_factor
+            length=self.axes_length_m,
+            radius=self.axes_radius_m,
         )
         # Create predicted axes (semi-transparent version)
         self.predicted_axes = self._create_axes_cylinders(
-            length=1.2 * self.scale_factor,
-            radius=0.02 * self.scale_factor
+            length=self.axes_length_m,
+            radius=self.axes_radius_m,
         )
     
     def _create_axes_cylinders(self, length: float = 1.0, radius: float = 0.02) -> dict:
@@ -225,45 +259,60 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.renderer.add_node("predicted_y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y_predicted']))
         self.renderer.add_node("predicted_z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z_predicted']))
     
+    def _compute_scene_diag_m(self) -> float:
+        """Return the scene AABB diagonal length in meters.
+
+        Covers the probe mesh plus the coordinate axes. Falls back to a
+        probe-only estimate if extents aren't available.
+        """
+        axes_extent = self.axes_length_m
+        probe_extent = 0.0
+        if self.probe_mesh is not None and hasattr(self.probe_mesh, 'extents'):
+            probe_extent = float(np.max(self.probe_mesh.extents))
+        bbox_side = max(axes_extent, probe_extent)
+        return float(np.sqrt(3.0) * bbox_side)
+
     def _setup_camera(self):
-        """Setup camera position and orientation."""
-        # Adjust camera distance based on scale factor
-        camera_distance = 5.0 * max(1.0, self.scale_factor * 0.8)
-        
-        # Original position
-        original_pos = np.array([3.0 * camera_distance/5.0, 2.0 * camera_distance/5.0, camera_distance])
-        
-        # Rotate camera position 135 degrees to the right (clockwise around Y-axis when viewed from above)
-        angle = np.pi * 0.75  # 135 degrees in radians
-        rotation_y = np.array([
-            [np.cos(angle), 0, np.sin(angle)],
-            [0, 1, 0],
-            [-np.sin(angle), 0, np.cos(angle)]
+        """Setup camera position and orientation (all distances in meters)."""
+        if self.camera_distance_m is not None:
+            distance = float(self.camera_distance_m)
+        else:
+            distance = max(0.35, 2.0 * self._compute_scene_diag_m())
+
+        # Place the camera on a sphere of radius `distance` around the origin,
+        # parameterized by azimuth (around +Y) and elevation (above XZ plane).
+        az = np.deg2rad(self.camera_azimuth_deg)
+        el = np.deg2rad(self.camera_elevation_deg)
+        camera_position = np.array([
+            distance * np.cos(el) * np.sin(az),
+            distance * np.sin(el),
+            distance * np.cos(el) * np.cos(az),
         ])
-        
-        # Apply rotation to camera position around the target (origin)
-        rotated_pos = rotation_y @ original_pos
-        
-        self.camera_pose = np.eye(4)
-        self.camera_pose[:3, 3] = rotated_pos
 
         target = np.array([0.0, 0.0, 0.0])
-        self.camera_pos = self.camera_pose[:3, 3]
         up = np.array([0.0, 1.0, 0.0])
 
-        forward = target - self.camera_pos
+        forward = target - camera_position
         forward /= np.linalg.norm(forward)
         right = np.cross(forward, up)
         right /= np.linalg.norm(right)
         up_corrected = np.cross(right, forward)
 
+        self.camera_pose = np.eye(4)
         self.camera_pose[:3, 0] = right
         self.camera_pose[:3, 1] = up_corrected
         self.camera_pose[:3, 2] = -forward
+        self.camera_pose[:3, 3] = camera_position
+        self.camera_pos = camera_position
+
         self.renderer.set_camera_pose(self.camera_pose)
-        
+
         # Update lighting direction to point from camera to object
         self._setup_camera_aligned_lighting()
+
+    def refit_camera(self):
+        """Recompute camera framing from the current scene AABB."""
+        self._setup_camera()
     
     def _setup_camera_aligned_lighting(self):
         """Setup directional light that points from camera to the object at origin."""
@@ -388,9 +437,13 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 predicted_rotation_matrix, rotation_matrix)
         
         
-        # Apply rotation to probe and current axes (needs 4x4)
+        # Apply rotation to probe and current axes (needs 4x4). The probe
+        # also picks up ``probe_origin_m`` so positional tracking can later
+        # place it anywhere in the scene; axes stay anchored at the origin.
         if rotation_matrix is not None:
-            self.renderer.set_pose("probe", rotation_matrix)
+            probe_pose = rotation_matrix.copy()
+            probe_pose[:3, 3] = self.probe_origin_m
+            self.renderer.set_pose("probe", probe_pose)
             self.renderer.set_pose("x_axis", rotation_matrix)
             self.renderer.set_pose("y_axis", rotation_matrix)
             self.renderer.set_pose("z_axis", rotation_matrix)
@@ -477,13 +530,6 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     def get_wireframe(self) -> bool:
         """Get current wireframe state."""
         return self.wireframe
-    
-    def set_scale_factor(self, scale_factor: float):
-        """Update the scale factor and reinitialize if needed."""
-        if scale_factor != self.scale_factor:
-            self.scale_factor = scale_factor
-            # Would need to reinitialize meshes and camera for full effect
-            self._setup_camera()  # At least update camera
     
     def destroy(self):
         """Clean up 3D renderer resources."""

@@ -107,12 +107,12 @@ class GuidanceUI:
             self._guidance_widget_renderer = GuidanceWidgetRenderer3D(
                 self._env_config["probe_mesh_path"],
                 background_color=(0, 0, 0, 1),
-                scale_factor=3.0,
-                 wireframe=False,
-                 window_size=(640, 480),
-                 render_mode='fullscreen',
-                 rotation_amplification=3.0,
-                 legend_image_path = self._env_config["guidance_widget_legend_png_path"]
+                wireframe=False,
+                window_size=(640, 480),
+                render_mode='fullscreen',
+                rotation_amplification=3.0,
+                legend_image_path=self._env_config["guidance_widget_legend_png_path"],
+                probe_units='mm',
             )
 
         # Initialize the data streamer

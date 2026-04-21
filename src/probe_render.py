@@ -36,11 +36,21 @@ def main():
     parser.add_argument("--clarius-ip", type=str, default=None, help="Clarius probe IP address")
     parser.add_argument("--clarius-port", type=int, default=5828, help="Clarius probe port")
     parser.add_argument("--window-size", type=int, default=640, help="Window side length in pixels")
-    parser.add_argument("--scale-factor", type=float, default=3.0, help="Probe mesh scale factor")
+    parser.add_argument("--probe-units", type=str, default="mm",
+                        help="Native unit of the probe STL: mm, cm, dm, m, in, "
+                             "or a meters-per-unit float")
+    parser.add_argument("--camera-distance-m", type=float, default=None,
+                        help="Camera distance from scene origin in meters. "
+                             "If omitted, auto-fits to the scene AABB.")
     parser.add_argument("--rotation-amplification", type=float, default=3.0,
                         help="Rotation amplification factor for the renderer")
     parser.add_argument("--wireframe", action="store_true", help="Render in wireframe mode")
     args = parser.parse_args()
+
+    try:
+        probe_units = float(args.probe_units)
+    except ValueError:
+        probe_units = args.probe_units
 
     probe_mesh_path = os.getenv("PROBE_MESH_PATH")
     if not probe_mesh_path:
@@ -55,12 +65,13 @@ def main():
     renderer = GuidanceWidgetRenderer3D(
         probe_mesh_path,
         background_color=(0, 0, 0, 1),
-        scale_factor=args.scale_factor,
         wireframe=args.wireframe,
         window_size=(args.window_size, args.window_size),
         render_mode="fullscreen",
         rotation_amplification=args.rotation_amplification,
         legend_image_path=legend_png_path,
+        probe_units=probe_units,
+        camera_distance_m=args.camera_distance_m,
     )
 
     window = create_image_window(

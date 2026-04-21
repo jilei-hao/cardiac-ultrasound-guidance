@@ -10,6 +10,27 @@ from typing import Dict, Optional, Tuple, Union, Any
 import os
 
 
+UNIT_TO_METERS: Dict[str, float] = {
+    'm': 1.0,
+    'dm': 0.1,
+    'cm': 0.01,
+    'mm': 0.001,
+    'in': 0.0254,
+}
+
+
+def _resolve_meters_per_unit(source_units: Union[str, float]) -> float:
+    if isinstance(source_units, (int, float)):
+        return float(source_units)
+    try:
+        return UNIT_TO_METERS[source_units]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown source_units '{source_units}'. "
+            f"Expected one of {sorted(UNIT_TO_METERS)} or a meters-per-unit float."
+        ) from exc
+
+
 class Generic3DRenderer:
     """
     Generic 3D renderer using pyrender for off-screen rendering.
@@ -69,16 +90,20 @@ class Generic3DRenderer:
         
         self.is_initialized = False
     
-    def initialize(self, 
+    def initialize(self,
                    camera_fov: float = np.pi / 3.0,
-                   camera_pose: Optional[np.ndarray] = None) -> bool:
+                   camera_pose: Optional[np.ndarray] = None,
+                   znear: float = 0.01,
+                   zfar: float = 10.0) -> bool:
         """
         Initialize the renderer, scene, camera, and lighting.
-        
+
         Args:
             camera_fov: Camera field of view in radians (default: 60 degrees)
             camera_pose: 4x4 camera transformation matrix. If None, uses default position.
-            
+            znear: Near clip plane in meters (default 0.01).
+            zfar: Far clip plane in meters (default 10.0).
+
         Returns:
             bool: True if initialization successful, False otherwise
         """
@@ -88,19 +113,21 @@ class Generic3DRenderer:
                 bg_color=self.background_color,
                 ambient_light=self.ambient_light
             )
-            
+
             # Create camera
             self.camera = pyrender.PerspectiveCamera(
                 yfov=camera_fov,
-                aspectRatio=self.width / self.height
+                aspectRatio=self.width / self.height,
+                znear=znear,
+                zfar=zfar,
             )
-            
-            # Set camera pose (default: looking at origin from +Z)
+
+            # Set camera pose (default: looking at origin from +Z, ~1 m back)
             if camera_pose is None:
                 camera_pose = np.array([
                     [1.0, 0.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 3.0],  # Camera at z=3
+                    [0.0, 0.0, 1.0, 1.0],
                     [0.0, 0.0, 0.0, 1.0]
                 ])
             
@@ -129,8 +156,8 @@ class Generic3DRenderer:
         # Position light from upper front left for good modeling
         main_light_pose = np.array([
             [0.7071, -0.5, 0.5, 0.0],
-            [0.7071, 0.5, -0.5, 0.0], 
-            [0.0, 0.7071, 0.7071, 3.0],
+            [0.7071, 0.5, -0.5, 0.0],
+            [0.0, 0.7071, 0.7071, 1.0],
             [0.0, 0.0, 0.0, 1.0]
         ])
         main_light_node = self.scene.add(main_light, pose=main_light_pose)
@@ -144,7 +171,7 @@ class Generic3DRenderer:
         fill_light_pose = np.array([
             [-0.7071, 0.5, -0.5, 0.0],
             [-0.7071, -0.5, 0.5, 0.0],
-            [0.0, -0.7071, 0.7071, 2.0],
+            [0.0, -0.7071, 0.7071, 0.7],
             [0.0, 0.0, 0.0, 1.0]
         ])
         fill_light_node = self.scene.add(fill_light, pose=fill_light_pose)
@@ -156,9 +183,9 @@ class Generic3DRenderer:
             intensity=2.0  # Much lower intensity
         )
         key_light_pose = np.array([
-            [1.0, 0.0, 0.0, 1.5],
-            [0.0, 1.0, 0.0, 2.0],
-            [0.0, 0.0, 1.0, 2.5],
+            [1.0, 0.0, 0.0, 0.5],
+            [0.0, 1.0, 0.0, 0.7],
+            [0.0, 0.0, 1.0, 0.8],
             [0.0, 0.0, 0.0, 1.0]
         ])
         key_light_node = self.scene.add(key_light, pose=key_light_pose)
@@ -359,39 +386,64 @@ class Generic3DRenderer:
             self.remove_node(name)
         print("Scene cleared (camera and lights preserved)")
     
-    def load_mesh_from_file(self, 
-                           filepath: str,
-                           scale: float = 1.0,
-                           center: bool = True) -> Optional[trimesh.Trimesh]:
+    def load_mesh_from_file(self,
+                            filepath: str,
+                            source_units: Union[str, float] = 'm',
+                            extra_scale: float = 1.0,
+                            center: bool = True,
+                            recenter_mode: str = 'aabb') -> Optional[trimesh.Trimesh]:
         """
-        Load a mesh from file (STL, OBJ, PLY, etc.).
-        
+        Load a mesh from file (STL, OBJ, PLY, etc.) and convert it to meters.
+
         Args:
-            filepath: Path to mesh file
-            scale: Scale factor to apply to mesh
-            center: Whether to center the mesh at origin
-            
+            filepath: Path to mesh file.
+            source_units: Native unit of the mesh file. String in
+                {'m','dm','cm','mm','in'} or a float meters-per-unit.
+            extra_scale: Additional dimensionless scale applied after unit
+                conversion (default 1.0). Use only for deliberate artistic
+                overrides, not unit correction.
+            center: Whether to translate the mesh so its chosen center lies
+                at the origin.
+            recenter_mode: 'aabb' (axis-aligned bounding-box midpoint,
+                default) or 'mass' (density-weighted centroid). AABB is
+                preferred for thin-shelled STLs where mass-based centroids
+                can drift off the visible silhouette.
+
         Returns:
-            trimesh.Trimesh: Loaded mesh, or None if failed
+            trimesh.Trimesh: Loaded mesh with vertices in meters, or None
+            if loading failed.
         """
         if not os.path.exists(filepath):
             print(f"File not found: {filepath}")
             return None
-        
+
         try:
             mesh = trimesh.load(filepath)
-            
-            # Center mesh if requested
+
             if center:
-                mesh.vertices -= mesh.center_mass
-            
-            # Scale mesh
-            if scale != 1.0:
-                mesh.vertices *= scale
-            
-            print(f"Loaded mesh from {filepath} ({len(mesh.vertices)} vertices)")
+                if recenter_mode == 'aabb':
+                    mesh.vertices -= (mesh.bounds[0] + mesh.bounds[1]) / 2.0
+                elif recenter_mode == 'mass':
+                    mesh.vertices -= mesh.center_mass
+                else:
+                    raise ValueError(
+                        f"Unknown recenter_mode '{recenter_mode}' "
+                        "(expected 'aabb' or 'mass')"
+                    )
+
+            meters_per_unit = _resolve_meters_per_unit(source_units)
+            total_scale = meters_per_unit * extra_scale
+            if total_scale != 1.0:
+                mesh.apply_scale(total_scale)
+
+            print(
+                f"Loaded mesh from {filepath} "
+                f"({len(mesh.vertices)} vertices, "
+                f"source_units={source_units}, "
+                f"extents_m={mesh.extents})"
+            )
             return mesh
-            
+
         except Exception as e:
             print(f"Failed to load mesh from {filepath}: {e}")
             return None
