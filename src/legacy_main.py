@@ -228,7 +228,7 @@ def run_event_loop(options, config):
     probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
     rotation_amplification=5.0,  # Amplification factor for rotation prediction
     # 3D-specific parameters (ignored by 2D renderer)
-    probe_units='mm',
+    probe_units='cm',
     wireframe=False
   )
   

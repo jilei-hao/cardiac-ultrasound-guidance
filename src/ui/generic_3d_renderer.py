@@ -418,7 +418,7 @@ class Generic3DRenderer:
             return None
 
         try:
-            mesh = trimesh.load(filepath)
+            mesh = trimesh.load(filepath, force='mesh')
 
             if center:
                 if recenter_mode == 'aabb':

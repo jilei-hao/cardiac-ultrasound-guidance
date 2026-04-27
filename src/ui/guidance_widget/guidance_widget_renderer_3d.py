@@ -15,6 +15,7 @@ from typing import Optional, Union
 from .guidance_widget_renderer import GuidanceWidgetRenderer
 from ..generic_3d_renderer import (
     Generic3DRenderer,
+    _resolve_meters_per_unit,
     create_translation_matrix,
     create_rotation_matrix,
     quaternion_to_matrix,
@@ -41,12 +42,16 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  camera_azimuth_deg: float = 135.0,
                  camera_elevation_deg: float = 22.0,
                  probe_origin_m: tuple = (0.0, 0.0, 0.0),
+                 probe_pivot_local_m: Optional[tuple] = None,
+                 probe_pivot_axis: str = 'y',
+                 probe_pivot_sign: int = -1,
+                 probe_axis_fix_euler_deg: Optional[tuple] = None,
                  **kwargs):
         """
         Initialize 3D guidance widget renderer.
 
         Args:
-            probe_path: Path to the probe STL file.
+            probe_path: Path to the probe mesh file (STL or OBJ).
             background_color: Background color as RGBA tuple.
             wireframe: Whether to render in wireframe mode.
             window_size: Window dimensions (width, height) in pixels.
@@ -54,7 +59,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             rotation_amplification: Amplification factor for rotation
                 prediction.
             legend_image_path: Optional path to a legend image overlay.
-            probe_units: Native unit of the probe STL ('mm', 'cm', 'dm',
+            probe_units: Native unit of the probe mesh ('mm', 'cm', 'dm',
                 'm', 'in', or a meters-per-unit float). Default 'mm'.
             axes_length_m: Length of each coordinate-axis shaft in meters.
             axes_radius_m: Shaft radius of each coordinate axis in meters.
@@ -66,6 +71,26 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 plane) in degrees.
             probe_origin_m: Reserved translation for positional tracking;
                 currently defaults to the origin.
+            probe_pivot_local_m: Offset from the AABB-centered mesh origin
+                to the physical tip, in mesh-local meters. If None, it is
+                auto-computed from ``probe_pivot_axis`` / ``probe_pivot_sign``
+                after the mesh loads. Rotations pivot around this point so
+                the tip stays planted at ``probe_origin_m``, matching the
+                sonographer's physical rotation around the skin-contact tip.
+            probe_pivot_axis: Mesh-local axis ('x'|'y'|'z') the probe's
+                long dimension runs along. Used only when
+                ``probe_pivot_local_m`` is None. Default 'y'.
+            probe_pivot_sign: +1 if the tip sits at the max end of
+                ``probe_pivot_axis``, -1 for the min end. Default -1.
+            probe_axis_fix_euler_deg: Optional (rx, ry, rz) in degrees
+                (scipy 'xyz' intrinsic). Pre-rotates mesh-local vertices
+                into the Clarius IMU frame before the live quaternion is
+                applied, so the probe renders in the correct orientation
+                when the IMU reports identity. Leave as None for an
+                IMU-aligned mesh (see scripts/scale_probe_stl.py
+                --align-imu); set empirically otherwise, per the static
+                pose verification in the Clarius motion docs
+                (https://github.com/clariusdev/motion).
             **kwargs: Additional configuration parameters.
         """
         super().__init__(probe_path, **kwargs)
@@ -84,9 +109,22 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_azimuth_deg = camera_azimuth_deg
         self.camera_elevation_deg = camera_elevation_deg
         self.probe_origin_m = np.asarray(probe_origin_m, dtype=float)
+        self.probe_pivot_axis = probe_pivot_axis
+        self.probe_pivot_sign = int(probe_pivot_sign)
+        self.probe_pivot_local_m = (
+            np.asarray(probe_pivot_local_m, dtype=float)
+            if probe_pivot_local_m is not None else None
+        )
+        if probe_axis_fix_euler_deg is None:
+            self.probe_axis_fix_matrix = np.eye(3)
+        else:
+            self.probe_axis_fix_matrix = R.from_euler(
+                'xyz', probe_axis_fix_euler_deg, degrees=True
+            ).as_matrix()
 
         self.renderer = None
         self.probe_mesh = None
+        self.probe_node_specs: list = []
         self.axes = None
         self.materials = None
         self.camera_pose = None
@@ -131,38 +169,117 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             raise RuntimeError(f"Failed to initialize 3D renderer: {e}")
     
     def _load_probe_mesh(self):
-        """Load probe mesh from STL file and convert to meters."""
+        """Load the probe mesh (STL or OBJ) and convert it to meters.
+
+        OBJ files with multiple ``usemtl`` groups are loaded as a
+        ``trimesh.Scene`` and split into one pyrender mesh per material so
+        the per-part colors declared in the companion ``.mtl`` file render
+        through. Single-mesh formats (STL, single-material OBJ) flow
+        through the same code path with a list of length one. ``self.probe_mesh``
+        remains a combined ``Trimesh`` so the existing extents- and pivot-
+        based logic keeps working unchanged.
+        """
+        import pyrender
+
         fallback_radius_m = 0.022
         fallback_height_m = 0.15
 
-        if os.path.exists(self.probe_path):
-            print(f"Loading probe STL: {self.probe_path}")
-            self.probe_mesh = self.renderer.load_mesh_from_file(
-                self.probe_path,
-                source_units=self.probe_units,
-                center=True,
-            )
-            if self.probe_mesh is not None:
-                diag = float(np.linalg.norm(self.probe_mesh.extents))
-                if not (0.02 <= diag <= 0.40):
-                    print(
-                        f"⚠️  Probe mesh bbox diagonal {diag:.3f} m is outside "
-                        f"[0.02, 0.40] m — asset may be mislabeled "
-                        f"(probe_units={self.probe_units})."
-                    )
-            else:
-                print("Failed to load probe STL, using capsule fallback")
-                self.probe_mesh = trimesh.creation.capsule(
-                    radius=fallback_radius_m,
-                    height=fallback_height_m,
-                )
-        else:
-            print(f"Probe STL not found: {self.probe_path}, using capsule")
-            self.probe_mesh = trimesh.creation.capsule(
+        sub_meshes = self._load_probe_submeshes()
+        if not sub_meshes:
+            print(f"Probe mesh not loaded: {self.probe_path}, using capsule")
+            capsule = trimesh.creation.capsule(
                 radius=fallback_radius_m,
                 height=fallback_height_m,
             )
-    
+            self.probe_mesh = capsule
+            self.probe_node_specs = [("probe", capsule, None)]
+        else:
+            # Recenter and scale every sub-mesh together so the assembly
+            # stays aligned and lands at the AABB center in meters.
+            all_vertices = np.concatenate(
+                [np.asarray(m.vertices, dtype=float) for m in sub_meshes],
+                axis=0,
+            )
+            center = (all_vertices.min(axis=0) + all_vertices.max(axis=0)) / 2.0
+            meters_per_unit = _resolve_meters_per_unit(self.probe_units)
+
+            for m in sub_meshes:
+                m.vertices = m.vertices - center
+                if meters_per_unit != 1.0:
+                    m.apply_scale(meters_per_unit)
+
+            self.probe_node_specs = [
+                (f"probe.{i}", m, pyrender.Mesh.from_trimesh(m))
+                for i, m in enumerate(sub_meshes)
+            ]
+
+            self.probe_mesh = trimesh.util.concatenate(sub_meshes)
+            diag = float(np.linalg.norm(self.probe_mesh.extents))
+            if not (0.02 <= diag <= 0.40):
+                print(
+                    f"⚠️  Probe mesh bbox diagonal {diag:.3f} m is outside "
+                    f"[0.02, 0.40] m — asset may be mislabeled "
+                    f"(probe_units={self.probe_units})."
+                )
+
+        if self.probe_pivot_local_m is None:
+            if (self.probe_mesh is not None
+                    and hasattr(self.probe_mesh, 'extents')
+                    and hasattr(self.probe_mesh, 'vertices')):
+                axis_idx = {'x': 0, 'y': 1, 'z': 2}[self.probe_pivot_axis]
+                verts = np.asarray(self.probe_mesh.vertices, dtype=float)
+                axis_coords = verts[:, axis_idx]
+                if self.probe_pivot_sign < 0:
+                    extreme = float(axis_coords.min())
+                    tol = 0.02 * float(self.probe_mesh.extents[axis_idx])
+                    mask = axis_coords <= extreme + tol
+                else:
+                    extreme = float(axis_coords.max())
+                    tol = 0.02 * float(self.probe_mesh.extents[axis_idx])
+                    mask = axis_coords >= extreme - tol
+                # Centroid of the tip face — robust to side protrusions
+                # (e.g. battery pack) that shift the AABB center off the
+                # probe's centerline.
+                self.probe_pivot_local_m = verts[mask].mean(axis=0)
+                print(
+                    f"probe_pivot_local_m auto-resolved to "
+                    f"{self.probe_pivot_local_m} "
+                    f"(centroid of {int(mask.sum())} vertices near "
+                    f"{self.probe_pivot_axis}"
+                    f"{'+' if self.probe_pivot_sign > 0 else '-'})"
+                )
+            else:
+                self.probe_pivot_local_m = np.zeros(3, dtype=float)
+
+    def _load_probe_submeshes(self) -> list:
+        """Return a list of Trimesh sub-meshes (one per material), or [].
+
+        Loads the probe asset preserving per-material structure for OBJ
+        files; single-mesh formats produce a single-element list.
+        """
+        if not os.path.exists(self.probe_path):
+            return []
+
+        print(f"Loading probe mesh: {self.probe_path}")
+        try:
+            loaded = trimesh.load(self.probe_path)
+        except Exception as e:
+            print(f"Failed to load probe mesh: {e}")
+            return []
+
+        if isinstance(loaded, trimesh.Scene):
+            # ``dump`` bakes scene-graph transforms onto each Trimesh and
+            # preserves ``visual.material`` from the .mtl, which pyrender
+            # converts to MetallicRoughnessMaterial in Mesh.from_trimesh.
+            sub_meshes = list(loaded.dump(concatenate=False))
+        else:
+            sub_meshes = [loaded]
+
+        return [
+            m for m in sub_meshes
+            if hasattr(m, 'vertices') and len(m.vertices) > 0
+        ]
+
     def _create_coordinate_axes(self):
         """Create coordinate axes cylinders (sizes in meters)."""
         self.axes = self._create_axes_cylinders(
@@ -199,12 +316,15 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         return axes
     
     def _create_materials(self):
-        """Create materials for probe and axes."""
+        """Create materials for axes and the capsule fallback probe."""
         import pyrender
-        
+
         self.materials = {
-            'probe': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.98, 0.98, 0.98, 1.0],  # White plastic
+            # Used only when the probe asset can't be loaded and we fall
+            # back to a generated capsule. Real probe meshes carry their
+            # own per-submesh materials from the companion .mtl.
+            'probe_fallback': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.98, 0.98, 0.98, 1.0],
                 metallicFactor=0.5,
                 roughnessFactor=0.5
             ),
@@ -247,9 +367,20 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     def _setup_scene(self):
         """Add meshes to the scene."""
         import pyrender
-        
-        # Add probe and current axes
-        self.renderer.add_node("probe", self.probe_mesh, material=self.materials['probe'])
+
+        # Add probe sub-nodes, one per material from the .mtl. Each entry
+        # in ``probe_node_specs`` is (node_name, trimesh, pyrender_mesh).
+        # ``pyrender_mesh`` is None for the capsule fallback path so we
+        # apply the fallback material there instead.
+        for name, sub_tri, pr_mesh in self.probe_node_specs:
+            if pr_mesh is None:
+                self.renderer.add_node(
+                    name, sub_tri,
+                    material=self.materials['probe_fallback'],
+                )
+            else:
+                self.renderer.add_node(name, pr_mesh)
+
         self.renderer.add_node("x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x']))
         self.renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y']))
         self.renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z']))
@@ -266,10 +397,15 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         probe-only estimate if extents aren't available.
         """
         axes_extent = self.axes_length_m
-        probe_extent = 0.0
+        probe_reach = 0.0
         if self.probe_mesh is not None and hasattr(self.probe_mesh, 'extents'):
             probe_extent = float(np.max(self.probe_mesh.extents))
-        bbox_side = max(axes_extent, probe_extent)
+            pivot_offset = (
+                float(np.linalg.norm(self.probe_pivot_local_m))
+                if self.probe_pivot_local_m is not None else 0.0
+            )
+            probe_reach = probe_extent / 2.0 + pivot_offset
+        bbox_side = max(axes_extent, probe_reach)
         return float(np.sqrt(3.0) * bbox_side)
 
     def _setup_camera(self):
@@ -438,12 +574,20 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         
         
         # Apply rotation to probe and current axes (needs 4x4). The probe
-        # also picks up ``probe_origin_m`` so positional tracking can later
-        # place it anywhere in the scene; axes stay anchored at the origin.
+        # is pivoted around ``probe_pivot_local_m`` (the tip, in mesh-local
+        # coords) so the tip stays planted at ``probe_origin_m`` while the
+        # body swings around it — matching a sonographer's physical pivot.
+        # ``probe_axis_fix_matrix`` pre-rotates mesh vertices into the IMU
+        # frame so the live quaternion means what the IMU thinks it means.
+        # Axes represent the IMU frame directly and receive R3 alone.
         if rotation_matrix is not None:
-            probe_pose = rotation_matrix.copy()
-            probe_pose[:3, 3] = self.probe_origin_m
-            self.renderer.set_pose("probe", probe_pose)
+            R3 = rotation_matrix[:3, :3]
+            R_probe = R3 @ self.probe_axis_fix_matrix
+            probe_pose = np.eye(4)
+            probe_pose[:3, :3] = R_probe
+            probe_pose[:3, 3] = self.probe_origin_m - R_probe @ self.probe_pivot_local_m
+            for name, _sub_tri, _pr_mesh in self.probe_node_specs:
+                self.renderer.set_pose(name, probe_pose)
             self.renderer.set_pose("x_axis", rotation_matrix)
             self.renderer.set_pose("y_axis", rotation_matrix)
             self.renderer.set_pose("z_axis", rotation_matrix)

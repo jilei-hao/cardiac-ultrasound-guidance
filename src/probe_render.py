@@ -36,8 +36,8 @@ def main():
     parser.add_argument("--clarius-ip", type=str, default=None, help="Clarius probe IP address")
     parser.add_argument("--clarius-port", type=int, default=5828, help="Clarius probe port")
     parser.add_argument("--window-size", type=int, default=640, help="Window side length in pixels")
-    parser.add_argument("--probe-units", type=str, default="mm",
-                        help="Native unit of the probe STL: mm, cm, dm, m, in, "
+    parser.add_argument("--probe-units", type=str, default="cm",
+                        help="Native unit of the probe mesh: mm, cm, dm, m, in, "
                              "or a meters-per-unit float")
     parser.add_argument("--camera-distance-m", type=float, default=None,
                         help="Camera distance from scene origin in meters. "

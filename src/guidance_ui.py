@@ -112,7 +112,7 @@ class GuidanceUI:
                 render_mode='fullscreen',
                 rotation_amplification=3.0,
                 legend_image_path=self._env_config["guidance_widget_legend_png_path"],
-                probe_units='mm',
+                probe_units='cm',
             )
 
         # Initialize the data streamer
