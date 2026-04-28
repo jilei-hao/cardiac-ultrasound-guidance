@@ -37,6 +37,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  legend_image_path: str = "",
                  probe_units: Union[str, float] = 'mm',
                  axes_length_m: float = 0.12,
+                 y_axis_length_m: Optional[float] = 0.20,
                  axes_radius_m: float = 0.003,
                  camera_distance_m: Optional[float] = None,
                  camera_azimuth_deg: float = 135.0,
@@ -44,8 +45,14 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  probe_origin_m: tuple = (0.0, 0.0, 0.0),
                  probe_pivot_local_m: Optional[tuple] = None,
                  probe_pivot_axis: str = 'y',
-                 probe_pivot_sign: int = -1,
-                 probe_axis_fix_euler_deg: Optional[tuple] = None,
+                 probe_pivot_sign: int = 1,
+                 probe_axis_fix_euler_deg: Optional[tuple] = (180.0, 0.0, 0.0),
+                 reference_body_path: Optional[str] = None,
+                 reference_body_units: Union[str, float] = 'cm',
+                 reference_body_scale_ratio: float = 0.75,
+                 reference_body_corner: str = 'bottom-left',
+                 reference_body_margin: float = 0.78,
+                 reference_body_h_margin: Optional[float] = 0.5,
                  **kwargs):
         """
         Initialize 3D guidance widget renderer.
@@ -62,6 +69,10 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             probe_units: Native unit of the probe mesh ('mm', 'cm', 'dm',
                 'm', 'in', or a meters-per-unit float). Default 'mm'.
             axes_length_m: Length of each coordinate-axis shaft in meters.
+            y_axis_length_m: Optional override for the Y-axis shaft length
+                in meters. Defaults longer than ``axes_length_m`` so the
+                green axis sticks out past the probe body and stays
+                visible. Pass None to use ``axes_length_m`` for Y too.
             axes_radius_m: Shaft radius of each coordinate axis in meters.
             camera_distance_m: Camera distance from the scene origin in
                 meters. If None, auto-fitted from the scene AABB.
@@ -104,6 +115,10 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
 
         self.probe_units = probe_units
         self.axes_length_m = axes_length_m
+        self.y_axis_length_m = (
+            float(y_axis_length_m)
+            if y_axis_length_m is not None else float(axes_length_m)
+        )
         self.axes_radius_m = axes_radius_m
         self.camera_distance_m = camera_distance_m
         self.camera_azimuth_deg = camera_azimuth_deg
@@ -122,6 +137,17 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 'xyz', probe_axis_fix_euler_deg, degrees=True
             ).as_matrix()
 
+        self.reference_body_path = reference_body_path
+        self.reference_body_units = reference_body_units
+        self.reference_body_scale_ratio = float(reference_body_scale_ratio)
+        self.reference_body_corner = reference_body_corner
+        self.reference_body_margin = float(reference_body_margin)
+        self.reference_body_h_margin = (
+            float(reference_body_h_margin)
+            if reference_body_h_margin is not None
+            else float(reference_body_margin)
+        )
+
         self.renderer = None
         self.probe_mesh = None
         self.probe_node_specs: list = []
@@ -129,6 +155,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.materials = None
         self.camera_pose = None
         self.camera_pos = None
+        self.camera_fov = np.pi / 4
 
         self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
@@ -145,23 +172,27 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 ambient_light=np.array([0.3, 0.3, 0.3])  # Lower ambient for better contrast
             )
             
-            if not self.renderer.initialize(camera_fov=np.pi / 4):
+            if not self.renderer.initialize(camera_fov=self.camera_fov):
                 raise RuntimeError("Failed to initialize Generic3DRenderer")
-            
+
             # Load probe mesh
             self._load_probe_mesh()
-            
+
             # Create coordinate axes
             self._create_coordinate_axes()
-            
+
             # Create materials
             self._create_materials()
-            
+
             # Add meshes to scene
             self._setup_scene()
-            
+
             # Setup camera
             self._setup_camera()
+
+            # Add reference body in a screen corner (after camera so we
+            # can use the view basis to place it).
+            self._setup_reference_body()
             
         except Exception as e:
             if self.renderer:
@@ -284,35 +315,41 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         """Create coordinate axes cylinders (sizes in meters)."""
         self.axes = self._create_axes_cylinders(
             length=self.axes_length_m,
+            y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
         )
         # Create predicted axes (semi-transparent version)
         self.predicted_axes = self._create_axes_cylinders(
             length=self.axes_length_m,
+            y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
         )
-    
-    def _create_axes_cylinders(self, length: float = 1.0, radius: float = 0.02) -> dict:
+
+    def _create_axes_cylinders(self, length: float = 1.0,
+                               y_length: Optional[float] = None,
+                               radius: float = 0.02) -> dict:
         """Create coordinate axes as trimesh cylinder objects."""
         axes = {}
-        
+        y_len = float(y_length) if y_length is not None else length
+
         # X-axis (red) - cylinder extending from origin along +X
         x_shaft = trimesh.creation.cylinder(radius=radius, height=length)
         x_shaft.apply_transform(create_rotation_matrix('y', np.pi/2))
         x_shaft.apply_transform(create_translation_matrix(length/2, 0, 0))
         axes['x'] = x_shaft
-        
-        # Y-axis (green) - cylinder extending from origin along +Y
-        y_shaft = trimesh.creation.cylinder(radius=radius, height=length)
+
+        # Y-axis (green) - cylinder extending from origin along +Y. Often
+        # rendered longer than X/Z so it pokes out past the probe body.
+        y_shaft = trimesh.creation.cylinder(radius=radius, height=y_len)
         y_shaft.apply_transform(create_rotation_matrix('x', -np.pi/2))
-        y_shaft.apply_transform(create_translation_matrix(0, length/2, 0))
+        y_shaft.apply_transform(create_translation_matrix(0, y_len/2, 0))
         axes['y'] = y_shaft
-        
+
         # Z-axis (blue) - cylinder extending from origin along +Z
         z_shaft = trimesh.creation.cylinder(radius=radius, height=length)
         z_shaft.apply_transform(create_translation_matrix(0, 0, length/2))
         axes['z'] = z_shaft
-        
+
         return axes
     
     def _create_materials(self):
@@ -396,7 +433,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         Covers the probe mesh plus the coordinate axes. Falls back to a
         probe-only estimate if extents aren't available.
         """
-        axes_extent = self.axes_length_m
+        axes_extent = max(self.axes_length_m, self.y_axis_length_m)
         probe_reach = 0.0
         if self.probe_mesh is not None and hasattr(self.probe_mesh, 'extents'):
             probe_extent = float(np.max(self.probe_mesh.extents))
@@ -449,6 +486,98 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     def refit_camera(self):
         """Recompute camera framing from the current scene AABB."""
         self._setup_camera()
+
+    def _setup_reference_body(self):
+        """Load the reference body mesh and pin it to a screen corner.
+
+        The body is rendered as a static reference (does not rotate with
+        the IMU) and is sized as a fraction of the probe's largest extent
+        so it stays small relative to the transducer.
+        """
+        if not self.reference_body_path:
+            return
+        if not os.path.exists(self.reference_body_path):
+            print(
+                f"⚠️  Reference body model not found at "
+                f"{self.reference_body_path}"
+            )
+            return
+
+        try:
+            body = trimesh.load(self.reference_body_path, force='mesh')
+        except Exception as e:
+            print(f"⚠️  Failed to load reference body: {e}")
+            return
+
+        if not hasattr(body, 'vertices') or len(body.vertices) == 0:
+            print("⚠️  Reference body mesh has no vertices; skipping.")
+            return
+
+        meters_per_unit = _resolve_meters_per_unit(self.reference_body_units)
+        if meters_per_unit != 1.0:
+            body.apply_scale(meters_per_unit)
+
+        body_center = (body.bounds[0] + body.bounds[1]) / 2.0
+        body.vertices = body.vertices - body_center
+
+        if self.probe_mesh is not None and hasattr(self.probe_mesh, 'extents'):
+            probe_size = float(np.max(self.probe_mesh.extents))
+            target_size = probe_size * self.reference_body_scale_ratio
+            body_size = float(np.max(body.extents))
+            if body_size > 0 and target_size > 0:
+                body.apply_scale(target_size / body_size)
+
+        pose = self._compute_corner_pose(self.reference_body_corner)
+
+        import pyrender
+        body_material = pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[0.85, 0.78, 0.72, 1.0],
+            metallicFactor=0.1,
+            roughnessFactor=0.85,
+        )
+        self.renderer.add_node(
+            "reference_body", body,
+            pose=pose,
+            material=body_material,
+        )
+
+    def _compute_corner_pose(self, corner: str) -> np.ndarray:
+        """4x4 pose that places a node at one corner of the camera view.
+
+        Uses the camera basis vectors plus the vertical FOV to convert a
+        normalized screen offset into a world-space translation at the
+        same depth as the scene origin. The rotation lays the body
+        horizontally with head pointing to screen-right and chest facing
+        screen-up (i.e. lying on its back, viewed from the body's left
+        side), regardless of camera angle. Body-local axes for the
+        reference asset are +Y up (head), +Z front (face), +X body-left.
+        """
+        if self.camera_pose is None or self.camera_pos is None:
+            return np.eye(4)
+
+        distance = float(np.linalg.norm(self.camera_pos))
+        aspect = self.window_size[0] / max(1, self.window_size[1])
+        half_h = distance * np.tan(self.camera_fov / 2.0)
+        half_w = half_h * aspect
+
+        sign_x = +1 if 'right' in corner else -1
+        sign_y = +1 if 'top' in corner else -1
+
+        right_world = self.camera_pose[:3, 0]
+        up_world = self.camera_pose[:3, 1]
+        toward_viewer = self.camera_pose[:3, 2]
+
+        offset = (
+            right_world * (sign_x * half_w * self.reference_body_h_margin)
+            + up_world * (sign_y * half_h * self.reference_body_margin)
+        )
+
+        pose = np.eye(4)
+        pose[:3, 0] = toward_viewer   # body +X (body-left) → out of screen
+        pose[:3, 1] = right_world     # body +Y (head)      → screen-right
+        pose[:3, 2] = up_world        # body +Z (front)     → screen-up
+        pose[:3, 3] = offset
+        return pose
     
     def _setup_camera_aligned_lighting(self):
         """Setup directional light that points from camera to the object at origin."""

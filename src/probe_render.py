@@ -60,6 +60,11 @@ def main():
 
     legend_png_path = os.getenv("GUIDANCE_WIDGET_LEGEND_PNG_PATH", "")
 
+    reference_body_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "ui", "assets", "body_model.obj",
+    )
+
     streamer = _build_streamer(args.source, args.frames_folder, args.clarius_ip, args.clarius_port)
 
     renderer = GuidanceWidgetRenderer3D(
@@ -72,6 +77,7 @@ def main():
         legend_image_path=legend_png_path,
         probe_units=probe_units,
         camera_distance_m=args.camera_distance_m,
+        reference_body_path=reference_body_path,
     )
 
     window = create_image_window(
