@@ -41,12 +41,13 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  axes_radius_m: float = 0.003,
                  camera_distance_m: Optional[float] = None,
                  camera_azimuth_deg: float = 135.0,
-                 camera_elevation_deg: float = 22.0,
+                 camera_elevation_deg: float = 45.0,
+                 probe_origin_screen_y_from_top: float = 0.618,
                  probe_origin_m: tuple = (0.0, 0.0, 0.0),
                  probe_pivot_local_m: Optional[tuple] = None,
                  probe_pivot_axis: str = 'y',
                  probe_pivot_sign: int = 1,
-                 probe_axis_fix_euler_deg: Optional[tuple] = (180.0, 0.0, 0.0),
+                 probe_axis_fix_euler_deg: Optional[tuple] = (180.0, 0.0, 90.0),
                  reference_body_path: Optional[str] = None,
                  reference_body_units: Union[str, float] = 'cm',
                  reference_body_scale_ratio: float = 0.75,
@@ -95,13 +96,16 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 ``probe_pivot_axis``, -1 for the min end. Default -1.
             probe_axis_fix_euler_deg: Optional (rx, ry, rz) in degrees
                 (scipy 'xyz' intrinsic). Pre-rotates mesh-local vertices
-                into the Clarius IMU frame before the live quaternion is
-                applied, so the probe renders in the correct orientation
-                when the IMU reports identity. Leave as None for an
-                IMU-aligned mesh (see scripts/scale_probe_stl.py
-                --align-imu); set empirically otherwise, per the static
-                pose verification in the Clarius motion docs
-                (https://github.com/clariusdev/motion).
+                into the Clarius IMU body frame so live quaternions
+                rotate the right axes. Default ``(180, 0, 90)`` is the
+                fix for the official HD3 mesh: mesh +Y is the long axis
+                toward the tip and mesh +Z faces the imaging surface,
+                while the Clarius IMU has +X along the long axis toward
+                the tip and +Z out the back of the probe (per
+                https://github.com/clariusdev/imu, axes-v3.png). The
+                composed matrix sends mesh +Y → IMU +X (long axis) and
+                mesh +Z → IMU -Z (button-out at +Z). Set None for a
+                pre-aligned mesh.
             **kwargs: Additional configuration parameters.
         """
         super().__init__(probe_path, **kwargs)
@@ -123,6 +127,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_distance_m = camera_distance_m
         self.camera_azimuth_deg = camera_azimuth_deg
         self.camera_elevation_deg = camera_elevation_deg
+        self.probe_origin_screen_y_from_top = float(probe_origin_screen_y_from_top)
         self.probe_origin_m = np.asarray(probe_origin_m, dtype=float)
         self.probe_pivot_axis = probe_pivot_axis
         self.probe_pivot_sign = int(probe_pivot_sign)
@@ -156,6 +161,13 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.camera_pose = None
         self.camera_pos = None
         self.camera_fov = np.pi / 4
+
+        # 3x3 left-multiplied onto R_imu so a body-frame rotation of the
+        # probe maps to the same body-frame rotation of the rendered
+        # probe — independent of how IMU-world axes happen to align with
+        # render-world axes. Set by calibrate(); identity until the user
+        # calibrates.
+        self.calibration_matrix = np.eye(3)
 
         self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
@@ -471,6 +483,16 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         right /= np.linalg.norm(right)
         up_corrected = np.cross(right, forward)
 
+        # Translate the camera along its own up-axis so the world origin
+        # renders at ``probe_origin_screen_y_from_top`` (fraction from top).
+        # Pure translation — keeps ``forward``/``right``/``up_corrected``
+        # intact, so the look direction is unchanged.
+        half_h = distance * np.tan(self.camera_fov / 2.0)
+        y_from_top = self.probe_origin_screen_y_from_top
+        camera_position = camera_position + up_corrected * (
+            (2.0 * y_from_top - 1.0) * half_h
+        )
+
         self.camera_pose = np.eye(4)
         self.camera_pose[:3, 0] = right
         self.camera_pose[:3, 1] = up_corrected
@@ -486,6 +508,81 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     def refit_camera(self):
         """Recompute camera framing from the current scene AABB."""
         self._setup_camera()
+
+    def _world_head_direction(self) -> np.ndarray:
+        """Unit vector in the world XZ plane that the body reference's head
+        (and the probe's tip after calibration) points toward.
+
+        Picked as the camera-right direction projected onto the ground
+        plane. That keeps the reference scene laid flat on Y=0 — so when
+        the camera elevates, both the body and the calibrated probe show
+        their top faces — while still matching screen-right at the current
+        camera azimuth so the probe and body line up visually.
+        """
+        if self.camera_pose is None:
+            return np.array([1.0, 0.0, 0.0])
+        right_world = self.camera_pose[:3, 0]
+        world_up = np.array([0.0, 1.0, 0.0])
+        head_dir = right_world - world_up * float(np.dot(right_world, world_up))
+        n = float(np.linalg.norm(head_dir))
+        if n < 1e-9:
+            return np.array([1.0, 0.0, 0.0])
+        return head_dir / n
+
+    def _compute_calibration_target_world(self) -> np.ndarray:
+        """3x3 R_target that places the probe in the calibration view.
+
+        Maps the IMU body frame to world axes — not camera axes — so the
+        calibrated probe lies flat on the world ground plane. The Clarius
+        HD3 IMU body frame (per clariusdev/imu axes-v3.png) is +X along
+        the long axis toward the imaging tip, +Y the cross axis, +Z out
+        the back of the probe (away from the imaging face). At
+        calibration the operator holds the probe with tip pointing
+        superior (screen-right per the body reference) and button up, so
+        we send IMU +X → +head_dir (tip at screen-right) and IMU +Z →
+        world +Y (button-up). IMU +Y is the cross product (Z × X) to
+        keep the basis right-handed.
+        """
+        head_dir = self._world_head_direction()
+        world_up = np.array([0.0, 1.0, 0.0])
+        probe_x_world = head_dir
+        probe_y_world = np.cross(world_up, head_dir)
+        n = float(np.linalg.norm(probe_y_world))
+        if n > 1e-9:
+            probe_y_world = probe_y_world / n
+        return np.column_stack([probe_x_world, probe_y_world, world_up])
+
+    def calibrate(self, qw: float = 1.0, qx: float = 0.0,
+                  qy: float = 0.0, qz: float = 0.0):
+        """Reset the rendering pose so the probe's current IMU reading maps
+        to the canonical calibration view: tip pointing toward the body's
+        superior direction (screen-right per the body reference) with the
+        button side facing screen-up.
+
+        Call while the operator holds the probe parallel to the patient's
+        long axis, button up, tip pointing superior.
+        """
+        R_imu = quaternion_to_matrix(qw, qx, qy, qz)[:3, :3]
+        R_target = self._compute_calibration_target_world()
+        # Left-multiply form: R3 = calibration_matrix @ R_imu_now.
+        # Derivation: with R_imu_now = R_imu_calib @ dR_body (rotation in
+        # the probe's body frame), we want the rendered probe to have
+        # R_target @ dR_body — i.e., the same body-frame rotation applied
+        # to the calibration pose. That gives R3 = R_target @ R_imu_calib.T
+        # @ R_imu_now, regardless of how IMU-world axes align with render-
+        # world axes. The previous right-multiply form leaked the IMU-
+        # world basis into render rotations, swapping/flipping axes when
+        # the two world frames disagreed (e.g., IMU +Z up vs render +Y up).
+        self.calibration_matrix = R_target @ R_imu.T
+        print(
+            f"✅ Probe calibrated (q=[{qw:.3f}, {qx:.3f}, "
+            f"{qy:.3f}, {qz:.3f}])."
+        )
+
+    def reset_calibration(self):
+        """Drop any prior calibration; render raw IMU rotation again."""
+        self.calibration_matrix = np.eye(3)
+        print("↩️  Probe calibration reset.")
 
     def _setup_reference_body(self):
         """Load the reference body mesh and pin it to a screen corner.
@@ -542,15 +639,20 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         )
 
     def _compute_corner_pose(self, corner: str) -> np.ndarray:
-        """4x4 pose that places a node at one corner of the camera view.
+        """4x4 pose that places the body reference at a screen corner.
 
-        Uses the camera basis vectors plus the vertical FOV to convert a
-        normalized screen offset into a world-space translation at the
-        same depth as the scene origin. The rotation lays the body
-        horizontally with head pointing to screen-right and chest facing
-        screen-up (i.e. lying on its back, viewed from the body's left
-        side), regardless of camera angle. Body-local axes for the
-        reference asset are +Y up (head), +Z front (face), +X body-left.
+        Both position and orientation are camera-relative, so the body
+        always renders the same way in screen space regardless of camera
+        angle: lying on its back, head pointing screen-right, chest facing
+        screen-up (i.e. viewed from the body's left side). That makes it a
+        stable anatomical reference even when the camera is tilted to
+        reveal the top face of the calibrated probe. Body-local axes for
+        the reference asset are +Y up (head), +Z front (face), +X body-
+        left.
+
+        The corner offset adds back the camera's vertical shift (from
+        ``probe_origin_screen_y_from_top``) so the body stays anchored to
+        the corner after the camera was translated up.
         """
         if self.camera_pose is None or self.camera_pos is None:
             return np.eye(4)
@@ -571,6 +673,10 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             right_world * (sign_x * half_w * self.reference_body_h_margin)
             + up_world * (sign_y * half_h * self.reference_body_margin)
         )
+        # Counteract the camera's vertical translation so the body lands
+        # in the same screen corner regardless of ``y_from_top``.
+        y_from_top = self.probe_origin_screen_y_from_top
+        offset = offset + up_world * ((2.0 * y_from_top - 1.0) * half_h)
 
         pose = np.eye(4)
         pose[:3, 0] = toward_viewer   # body +X (body-left) → out of screen
@@ -710,22 +816,28 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         # frame so the live quaternion means what the IMU thinks it means.
         # Axes represent the IMU frame directly and receive R3 alone.
         if rotation_matrix is not None:
-            R3 = rotation_matrix[:3, :3]
+            # Left-multiply by ``calibration_matrix`` so the calibration
+            # pose maps to the canonical render orientation and live
+            # rotations follow the probe's body axes; identity until the
+            # operator calls ``calibrate()``.
+            R3 = self.calibration_matrix @ rotation_matrix[:3, :3]
             R_probe = R3 @ self.probe_axis_fix_matrix
             probe_pose = np.eye(4)
             probe_pose[:3, :3] = R_probe
             probe_pose[:3, 3] = self.probe_origin_m - R_probe @ self.probe_pivot_local_m
             for name, _sub_tri, _pr_mesh in self.probe_node_specs:
                 self.renderer.set_pose(name, probe_pose)
-            self.renderer.set_pose("x_axis", rotation_matrix)
-            self.renderer.set_pose("y_axis", rotation_matrix)
-            self.renderer.set_pose("z_axis", rotation_matrix)
-        
+            axes_pose = np.eye(4)
+            axes_pose[:3, :3] = R3
+            self.renderer.set_pose("x_axis", axes_pose)
+            self.renderer.set_pose("y_axis", axes_pose)
+            self.renderer.set_pose("z_axis", axes_pose)
+
         # Apply amplified predicted rotation to predicted axes
         if amplified_predicted_rotation is not None:
             # Convert 3x3 rotation matrix to 4x4 transformation matrix
             predicted_pose = np.eye(4)
-            predicted_pose[:3, :3] = amplified_predicted_rotation
+            predicted_pose[:3, :3] = self.calibration_matrix @ amplified_predicted_rotation
             
             self.renderer.set_pose("predicted_x_axis", predicted_pose)
             self.renderer.set_pose("predicted_y_axis", predicted_pose)

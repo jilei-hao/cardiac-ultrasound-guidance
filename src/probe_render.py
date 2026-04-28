@@ -42,6 +42,10 @@ def main():
     parser.add_argument("--camera-distance-m", type=float, default=None,
                         help="Camera distance from scene origin in meters. "
                              "If omitted, auto-fits to the scene AABB.")
+    parser.add_argument("--camera-elevation-deg", type=float, default=None,
+                        help="Camera elevation above the XZ plane in "
+                             "degrees. Higher values look more top-down. "
+                             "Defaults to the renderer's built-in value.")
     parser.add_argument("--rotation-amplification", type=float, default=3.0,
                         help="Rotation amplification factor for the renderer")
     parser.add_argument("--wireframe", action="store_true", help="Render in wireframe mode")
@@ -67,6 +71,10 @@ def main():
 
     streamer = _build_streamer(args.source, args.frames_folder, args.clarius_ip, args.clarius_port)
 
+    elevation_kwarg = (
+        {"camera_elevation_deg": args.camera_elevation_deg}
+        if args.camera_elevation_deg is not None else {}
+    )
     renderer = GuidanceWidgetRenderer3D(
         probe_mesh_path,
         background_color=(0, 0, 0, 1),
@@ -78,6 +86,7 @@ def main():
         probe_units=probe_units,
         camera_distance_m=args.camera_distance_m,
         reference_body_path=reference_body_path,
+        **elevation_kwarg,
     )
 
     window = create_image_window(
@@ -90,12 +99,21 @@ def main():
         raise RuntimeError("🛑 Failed to initialize image window")
 
     state = {"quit": False}
+    latest_imu = {"qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0}
 
     def request_quit():
         state["quit"] = True
 
+    def calibrate():
+        renderer.calibrate(**latest_imu)
+
+    def reset_calibration():
+        renderer.reset_calibration()
+
     window.register_key_handler("q", request_quit)
     window.register_key_handler("Escape", request_quit)
+    window.register_key_handler("c", calibrate)
+    window.register_key_handler("r", reset_calibration)
 
     identity_rotation = np.eye(3)
     started = False
@@ -103,7 +121,11 @@ def main():
     try:
         streamer.start()
         started = True
-        print("▶️  Probe render started. Press 'q' or Escape to quit.")
+        print(
+            "▶️  Probe render started. Hotkeys: 'c' calibrate (hold probe "
+            "parallel to long axis, button up, tip superior), 'r' reset "
+            "calibration, 'q'/Escape to quit."
+        )
 
         while window.is_window_active() and not state["quit"]:
             frame_data = streamer.get_frame()
@@ -119,6 +141,10 @@ def main():
             if frame_data.imu is not None:
                 imu = frame_data.imu
                 qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
+                latest_imu["qw"] = qw
+                latest_imu["qx"] = qx
+                latest_imu["qy"] = qy
+                latest_imu["qz"] = qz
             else:
                 qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
 
