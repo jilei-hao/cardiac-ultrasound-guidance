@@ -6,7 +6,7 @@
 # source ./scripts/setup.sh && cusg-record \
 # --ip 66.66.66.160 --port 5828 \
 # --outputdir ./output \
-# --duration 10 \
+# --duration 30 \
 # --interval 50 \
 # --preserve-date
 
@@ -17,4 +17,5 @@
 
 
 source ./scripts/setup.sh && cusg-probe-render \
---source simulator --frames-folder /Users/jileihao/data/vigil/recorded_exams/tte001/01463876826870
+--source simulator \
+--frames-folder /Users/jileihao/dev/vigil-developer/cardiac-ultrasound-guidance/output/1777469821799232000

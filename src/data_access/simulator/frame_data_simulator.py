@@ -23,8 +23,14 @@ class FrameDataSimulator(FrameDataInput):
         self.frames_folder = frames_folder
         if (imu_csv_file is not None) and (not os.path.exists(imu_csv_file)):
             raise FileNotFoundError(f"IMU CSV file not found: {imu_csv_file}")
+        
+        # try two default CSV file names if not explicitly provided
         if imu_csv_file is None:
             imu_csv_file = os.path.join(frames_folder, "frame.imu.csv")
+        if (imu_csv_file is not None) and (not os.path.exists(imu_csv_file)):
+            imu_csv_file = os.path.join(frames_folder, "frame.meta.csv")
+        if (imu_csv_file is not None) and (not os.path.exists(imu_csv_file)):
+            raise FileNotFoundError(f"IMU CSV file not found: {imu_csv_file}")
         
         self.imu_csv_file = imu_csv_file
         self.frame_files = []
