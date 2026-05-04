@@ -12,6 +12,7 @@ from ..image_helpers import overlay_color_legend
 from scipy.spatial.transform import Rotation as R
 from typing import Optional, Union
 
+from .arrow_builders import create_curved_arrow, create_straight_arrow
 from .guidance_widget_renderer import GuidanceWidgetRenderer
 from ..generic_3d_renderer import (
     Generic3DRenderer,
@@ -20,6 +21,36 @@ from ..generic_3d_renderer import (
     create_rotation_matrix,
     quaternion_to_matrix,
 )
+
+
+# Pose used to "hide" a node: shoves it far enough off-screen that it
+# falls outside any reasonable view frustum. Cheaper than removing /
+# re-adding the node every frame.
+_HIDDEN_POSE = np.eye(4)
+_HIDDEN_POSE[:3, 3] = [1e4, 1e4, 1e4]
+
+
+# Arrow direction labels used in the public API and as node-name suffixes.
+# Values are unit vectors in the IMU body frame (post probe_axis_fix):
+#   +X = probe long axis toward the tip
+#   ±Y, ±Z = perpendicular plane (lateral / back-of-probe)
+# Translation arrows point in the perpendicular plane outward from the
+# probe tip; rotation arrows curl around those same perpendicular axes
+# at the probe tail. The screen-direction labels (left/right/up/down) map
+# to the body-frame axes that visually correspond to those directions in
+# the default camera view.
+_TRANSLATION_DIRS = {
+    "right": np.array([0.0,  1.0, 0.0]),
+    "left":  np.array([0.0, -1.0, 0.0]),
+    "up":    np.array([0.0, 0.0,  1.0]),
+    "down":  np.array([0.0, 0.0, -1.0]),
+}
+_ROTATION_AXES = {
+    "right": np.array([0.0, 0.0,  1.0]),
+    "left":  np.array([0.0, 0.0, -1.0]),
+    "up":    np.array([0.0,  1.0, 0.0]),
+    "down":  np.array([0.0, -1.0, 0.0]),
+}
 
 
 class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
@@ -54,6 +85,11 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  reference_body_corner: str = 'bottom-left',
                  reference_body_margin: float = 0.78,
                  reference_body_h_margin: Optional[float] = 0.5,
+                 translation_arrow_length_m: float = 0.09,
+                 translation_arrow_offset_m: float = 0.025,
+                 rotation_arrow_radius_m: float = 0.0375,
+                 rotation_arrow_offset_m: float = 0.025,
+                 rotation_arrow_angle_deg: float = 200.0,
                  **kwargs):
         """
         Initialize 3D guidance widget renderer.
@@ -153,6 +189,29 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             else float(reference_body_margin)
         )
 
+        self.translation_arrow_length_m = float(translation_arrow_length_m)
+        self.translation_arrow_offset_m = float(translation_arrow_offset_m)
+        self.rotation_arrow_radius_m = float(rotation_arrow_radius_m)
+        self.rotation_arrow_offset_m = float(rotation_arrow_offset_m)
+        self.rotation_arrow_angle_deg = float(rotation_arrow_angle_deg)
+
+        # Toggleable scene layers. ``predicted_probe`` is reserved for a
+        # future ghost-probe overlay; the flag is accepted today so callers
+        # can wire UI for it without a renderer change. All names not
+        # listed here are rejected by ``set_layer_visible``.
+        self._layers_visible = {
+            "current_axes": True,
+            "predicted_axes": True,
+            "guidance_arrows": False,
+            "predicted_probe": False,
+        }
+        # Default selections; only the active arrow in each group renders
+        # while ``guidance_arrows`` is on.
+        self._active_translation_arrow = "right"
+        self._active_rotation_arrow = "right"
+        # Set in _setup_guidance_arrows after the probe geometry is known.
+        self._tail_imu = np.zeros(3, dtype=float)
+
         self.renderer = None
         self.probe_mesh = None
         self.probe_node_specs: list = []
@@ -198,6 +257,9 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
 
             # Add meshes to scene
             self._setup_scene()
+
+            # Build guidance arrows (depends on probe extents and pivot).
+            self._setup_guidance_arrows()
 
             # Setup camera
             self._setup_camera()
@@ -411,6 +473,20 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 roughnessFactor=0.6,
                 alphaMode='BLEND'
             ),
+            # Guidance arrows: pure green, matte finish.
+            # Translation and rotation share the color family for now;
+            # split into separate materials in case they need to diverge
+            # later.
+            'arrow_translation': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.0, 1.0, 0.0, 1.0],
+                metallicFactor=0.0,
+                roughnessFactor=1.0,
+            ),
+            'arrow_rotation': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.0, 1.0, 0.0, 1.0],
+                metallicFactor=0.0,
+                roughnessFactor=1.0,
+            ),
         }
     
     def _setup_scene(self):
@@ -438,7 +514,174 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.renderer.add_node("predicted_x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x_predicted']))
         self.renderer.add_node("predicted_y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y_predicted']))
         self.renderer.add_node("predicted_z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z_predicted']))
-    
+
+    def _setup_guidance_arrows(self):
+        """Create the 4 translation + 4 rotation guidance arrow nodes.
+
+        All arrows are built once with their geometry baked into the IMU
+        body frame; per-frame rendering only updates each node's pose to
+        ``[R3 | probe_origin_m]`` (or hides it). Translation arrows sit
+        outside the tip pointing outward; rotation arrows orbit the tail
+        with the curl plane perpendicular to their axis.
+        """
+        import pyrender
+
+        # Tail position in IMU body frame. With the probe rigged so the
+        # mesh-local pivot lands on the IMU long-axis end (+X by default),
+        # the tail end vertex sits at ``-2 * pivot`` in mesh-local, which
+        # the axis-fix matrix maps into the IMU body frame.
+        if self.probe_pivot_local_m is not None:
+            self._tail_imu = self.probe_axis_fix_matrix @ (
+                -2.0 * np.asarray(self.probe_pivot_local_m, dtype=float)
+            )
+        else:
+            self._tail_imu = np.zeros(3, dtype=float)
+
+        # Translation arrows: tail at ``offset * dir`` from probe tip,
+        # pointing further along ``dir`` for ``length``. Tip is at the
+        # IMU body-frame origin. ``flat_normal`` is the IMU long axis
+        # (+X), so all four cardinal arrows lie flat in the YZ plane
+        # together — matching the look of a flat arrow rosette.
+        for direction, vec in _TRANSLATION_DIRS.items():
+            arrow_mesh = create_straight_arrow(
+                length=self.translation_arrow_length_m,
+                shaft_width=self.axes_radius_m * 8.0,
+                shaft_thickness=self.axes_radius_m * 0.7,
+                head_length=self.translation_arrow_length_m * 0.30,
+                head_width=self.axes_radius_m * 20.0,
+                direction=tuple(vec),
+                flat_normal=(1.0, 0.0, 0.0),
+            )
+            arrow_mesh.apply_translation(vec * (self.translation_arrow_offset_m * 2.0))
+            self.renderer.add_node(
+                f"trans_arrow_{direction}",
+                pyrender.Mesh.from_trimesh(
+                    arrow_mesh, material=self.materials['arrow_translation']
+                ),
+                pose=_HIDDEN_POSE,
+            )
+
+        # Rotation arrows: arcs that bend along the rotation trajectory.
+        # The cross-section ('tall' orientation) keeps the ribbon's wide
+        # face along the bend axis, matching the straight-arrow look at
+        # the tail (wide along the cross axis, thin along the long axis).
+        # Bend axis = long_axis × rotation_axis, so the ribbon's tangent
+        # at the start equals +rotation_axis — the stem stretches along
+        # the rotation axis, then curls toward the long axis.
+        #
+        # Each tunable below is independent of the others — change one
+        # without disturbing the rest. ``arc_angle`` is the only derived
+        # quantity (length / radius); fix length and radius and the angle
+        # follows.
+        tail_norm = float(np.linalg.norm(self._tail_imu))
+        long_axis_imu = (
+            self._tail_imu / tail_norm if tail_norm > 1e-9
+            else np.array([-1.0, 0.0, 0.0])
+        )
+
+        # --- Rotation arrow tunables (all independent) ---
+        rot_arc_radius_imu = max(tail_norm * 0.7, 1e-3)   # curvature
+        rot_arc_length_imu = tail_norm * 0.55             # length along curve
+        rot_ribbon_width_imu = self.axes_radius_m * 16.0  # shaft width
+        rot_thickness_imu = self.axes_radius_m * 0.7      # out-of-plane depth
+        rot_head_length_imu = rot_arc_length_imu * 0.30   # head arc length
+        rot_head_width_imu = self.axes_radius_m * 40.0    # head base width
+        # Where the arc's geometric center sits in IMU coords. The
+        # ribbon's start point is ``arc_center + arc_radius * long_axis``,
+        # so this default plants the start on the tail regardless of
+        # ``rot_arc_radius_imu``. Edit this line alone to translate the
+        # whole arrow along the long axis without changing its shape.
+        rot_arc_center_imu = (tail_norm - rot_arc_radius_imu) * long_axis_imu
+        # Sideways offset along each direction's rotation axis (applied
+        # per-arrow inside the loop so each arrow lands on its own side).
+        rot_side_offset_m = 2.0 * self.rotation_arrow_offset_m
+        # --- end tunables ---
+
+        rot_arc_angle_deg = float(
+            np.rad2deg(rot_arc_length_imu / rot_arc_radius_imu)
+        )
+
+        for direction, axis in _ROTATION_AXES.items():
+            bend_axis = np.cross(long_axis_imu, axis)
+            n = float(np.linalg.norm(bend_axis))
+            if n < 1e-9:
+                # Long axis parallel to rotation axis (won't happen for
+                # ±Y, ±Z rotations with a -X long axis — keep the guard).
+                continue
+            bend_axis = bend_axis / n
+
+            arrow_mesh = create_curved_arrow(
+                arc_radius=rot_arc_radius_imu,
+                arc_angle_deg=rot_arc_angle_deg,
+                ribbon_width=rot_ribbon_width_imu,
+                thickness=rot_thickness_imu,
+                head_length=rot_head_length_imu,
+                head_width=rot_head_width_imu,
+                plane_normal=tuple(bend_axis),
+                start_dir=tuple(long_axis_imu),
+                orientation='tall',
+            )
+            arrow_mesh.apply_translation(
+                np.asarray(axis, dtype=float) * rot_side_offset_m
+                + rot_arc_center_imu
+            )
+            self.renderer.add_node(
+                f"rot_arrow_{direction}",
+                pyrender.Mesh.from_trimesh(
+                    arrow_mesh, material=self.materials['arrow_rotation']
+                ),
+                pose=_HIDDEN_POSE,
+            )
+
+    def set_layer_visible(self, name: str, visible: bool) -> None:
+        """Toggle a renderer layer on or off in real time.
+
+        Args:
+            name: One of ``"current_axes"``, ``"predicted_axes"``,
+                ``"guidance_arrows"``, ``"predicted_probe"``.
+            visible: True to show, False to hide on the next frame.
+        """
+        if name not in self._layers_visible:
+            raise ValueError(
+                f"Unknown layer '{name}'. Valid: "
+                f"{sorted(self._layers_visible.keys())}"
+            )
+        self._layers_visible[name] = bool(visible)
+
+    def is_layer_visible(self, name: str) -> bool:
+        return bool(self._layers_visible.get(name, False))
+
+    def toggle_layer(self, name: str) -> bool:
+        """Flip a layer's visibility. Returns the new state."""
+        self.set_layer_visible(name, not self.is_layer_visible(name))
+        return self.is_layer_visible(name)
+
+    def set_active_translation_arrow(self, direction: str) -> None:
+        """Pick which translation guidance arrow renders.
+
+        Args:
+            direction: One of ``"left"``, ``"right"``, ``"up"``, ``"down"``.
+        """
+        if direction not in _TRANSLATION_DIRS:
+            raise ValueError(
+                f"Unknown translation direction '{direction}'. Valid: "
+                f"{sorted(_TRANSLATION_DIRS.keys())}"
+            )
+        self._active_translation_arrow = direction
+
+    def set_active_rotation_arrow(self, direction: str) -> None:
+        """Pick which rotation guidance arrow renders.
+
+        Args:
+            direction: One of ``"left"``, ``"right"``, ``"up"``, ``"down"``.
+        """
+        if direction not in _ROTATION_AXES:
+            raise ValueError(
+                f"Unknown rotation direction '{direction}'. Valid: "
+                f"{sorted(_ROTATION_AXES.keys())}"
+            )
+        self._active_rotation_arrow = direction
+
     def _compute_scene_diag_m(self) -> float:
         """Return the scene AABB diagonal length in meters.
 
@@ -748,6 +991,38 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         fill_light_node = self.renderer.scene.add(fill_light, pose=fill_light_pose)
         self.renderer.light_nodes['fill'] = fill_light_node
     
+    def _set_axes_pose(self, names, pose: np.ndarray, visible: bool) -> None:
+        """Apply ``pose`` to each named axis node, or hide all if not visible."""
+        target = pose if visible else _HIDDEN_POSE
+        for name in names:
+            self.renderer.set_pose(name, target)
+
+    def _update_guidance_arrow_poses(self, R3: np.ndarray) -> None:
+        """Show only the active translation/rotation arrows; hide the rest.
+
+        Arrow geometry is baked in IMU body-frame coordinates (tip at
+        origin, tail offset along the long axis), so the per-frame pose
+        is just ``[R3 | probe_origin_m]`` plus whichever node is active.
+        """
+        layer_on = self._layers_visible["guidance_arrows"]
+        active_pose = np.eye(4)
+        active_pose[:3, :3] = R3
+        active_pose[:3, 3] = self.probe_origin_m
+
+        for direction in _TRANSLATION_DIRS.keys():
+            on = layer_on and direction == self._active_translation_arrow
+            self.renderer.set_pose(
+                f"trans_arrow_{direction}",
+                active_pose if on else _HIDDEN_POSE,
+            )
+
+        for direction in _ROTATION_AXES.keys():
+            on = layer_on and direction == self._active_rotation_arrow
+            self.renderer.set_pose(
+                f"rot_arrow_{direction}",
+                active_pose if on else _HIDDEN_POSE,
+            )
+
     def amplify_rotation_prediction(self, rotation_matrix, current_imu_rotation):
         """
         Amplify rotation prediction and combine with current IMU rotation.
@@ -827,29 +1102,33 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             probe_pose[:3, 3] = self.probe_origin_m - R_probe @ self.probe_pivot_local_m
             for name, _sub_tri, _pr_mesh in self.probe_node_specs:
                 self.renderer.set_pose(name, probe_pose)
+
             axes_pose = np.eye(4)
             axes_pose[:3, :3] = R3
-            self.renderer.set_pose("x_axis", axes_pose)
-            self.renderer.set_pose("y_axis", axes_pose)
-            self.renderer.set_pose("z_axis", axes_pose)
+            self._set_axes_pose(
+                ("x_axis", "y_axis", "z_axis"),
+                axes_pose, visible=self._layers_visible["current_axes"],
+            )
 
-        # Apply amplified predicted rotation to predicted axes
-        if amplified_predicted_rotation is not None:
-            # Convert 3x3 rotation matrix to 4x4 transformation matrix
+            self._update_guidance_arrow_poses(R3)
+
+        # Predicted axes follow the prediction when one is available AND
+        # the layer is on; otherwise they're hidden off-screen.
+        predicted_layer_on = self._layers_visible["predicted_axes"]
+        if predicted_layer_on and amplified_predicted_rotation is not None:
             predicted_pose = np.eye(4)
-            predicted_pose[:3, :3] = self.calibration_matrix @ amplified_predicted_rotation
-            
-            self.renderer.set_pose("predicted_x_axis", predicted_pose)
-            self.renderer.set_pose("predicted_y_axis", predicted_pose)
-            self.renderer.set_pose("predicted_z_axis", predicted_pose)
+            predicted_pose[:3, :3] = (
+                self.calibration_matrix @ amplified_predicted_rotation
+            )
+            self._set_axes_pose(
+                ("predicted_x_axis", "predicted_y_axis", "predicted_z_axis"),
+                predicted_pose, visible=True,
+            )
         else:
-            # Hide predicted axes if no prediction available (move far away)
-            hidden_pose = np.eye(4)
-            hidden_pose[:3, 3] = [1000, 1000, 1000]  # Move off-screen
-            
-            self.renderer.set_pose("predicted_x_axis", hidden_pose)
-            self.renderer.set_pose("predicted_y_axis", hidden_pose)
-            self.renderer.set_pose("predicted_z_axis", hidden_pose)
+            self._set_axes_pose(
+                ("predicted_x_axis", "predicted_y_axis", "predicted_z_axis"),
+                _HIDDEN_POSE, visible=False,
+            )
         
         # Render the scene
         if self.wireframe:

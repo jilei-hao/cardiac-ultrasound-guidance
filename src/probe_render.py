@@ -115,6 +115,42 @@ def main():
     window.register_key_handler("c", calibrate)
     window.register_key_handler("r", reset_calibration)
 
+    # Guidance arrow + layer toggles. Arrow keys pick which translation
+    # arrow renders; Shift+arrow does the same for rotation. Pressing any
+    # arrow key auto-enables the guidance_arrows layer so the selection
+    # is visible without a separate "show" step.
+    def select_translation(direction: str):
+        def handler():
+            renderer.set_layer_visible("guidance_arrows", True)
+            renderer.set_active_translation_arrow(direction)
+            print(f"➡️  translation arrow: {direction}")
+        return handler
+
+    def select_rotation(direction: str):
+        def handler():
+            renderer.set_layer_visible("guidance_arrows", True)
+            renderer.set_active_rotation_arrow(direction)
+            print(f"🔄 rotation arrow: {direction}")
+        return handler
+
+    window.register_key_handler("Left",  select_translation("left"))
+    window.register_key_handler("Right", select_translation("right"))
+    window.register_key_handler("Up",    select_translation("up"))
+    window.register_key_handler("Down",  select_translation("down"))
+    window.register_key_handler("Shift+Left",  select_rotation("left"))
+    window.register_key_handler("Shift+Right", select_rotation("right"))
+    window.register_key_handler("Shift+Up",    select_rotation("up"))
+    window.register_key_handler("Shift+Down",  select_rotation("down"))
+
+    def toggle_layer(name: str):
+        def handler():
+            on = renderer.toggle_layer(name)
+            print(f"{'✅' if on else '⛔'} {name}: {'on' if on else 'off'}")
+        return handler
+
+    window.register_key_handler("a", toggle_layer("guidance_arrows"))
+    window.register_key_handler("p", toggle_layer("predicted_axes"))
+
     identity_rotation = np.eye(3)
     started = False
 
@@ -122,9 +158,14 @@ def main():
         streamer.start()
         started = True
         print(
-            "▶️  Probe render started. Hotkeys: 'c' calibrate (hold probe "
-            "parallel to long axis, button up, tip superior), 'r' reset "
-            "calibration, 'q'/Escape to quit."
+            "▶️  Probe render started.\n"
+            "    Calibration: 'c' calibrate (hold probe parallel to long "
+            "axis, button up, tip superior), 'r' reset calibration.\n"
+            "    Layers:      'a' toggle guidance arrows, 'p' toggle "
+            "predicted axes.\n"
+            "    Arrows:      ←/→/↑/↓ pick translation arrow, "
+            "Shift+←/→/↑/↓ pick rotation arrow.\n"
+            "    Quit:        'q' or Escape."
         )
 
         while window.is_window_active() and not state["quit"]:

@@ -338,16 +338,27 @@ class QtImageWindow(AbstractImageWindow):
         }
         
         qt_key = event.key()
-        
+
         # Try to get mapped key
         if qt_key in key_map:
             key_str = key_map[qt_key]
         else:
             # Try to get text representation for other keys
             key_str = event.text()
-        
-        if key_str:
-            self._handle_key_event(key_str)
+
+        if not key_str:
+            return
+
+        # Prepend "Shift+" for named keys whose text form doesn't already
+        # encode the shift state (arrows, function keys). Letter keys and
+        # printable text already arrive shifted via ``event.text()``, so
+        # leave those alone.
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            if key_str in ('Up', 'Down', 'Left', 'Right'):
+                key_str = f'Shift+{key_str}'
+
+        self._handle_key_event(key_str)
     
     def _on_close_event(self, event):
         """
