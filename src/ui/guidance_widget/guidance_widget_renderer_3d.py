@@ -93,7 +93,9 @@ class GuidanceWidgetRenderer3D:
                  translation_arrow_offset_m: float = 0.025,
                  rotation_arrow_radius_m: float = 0.0375,
                  rotation_arrow_offset_m: float = 0.025,
-                 rotation_arrow_angle_deg: float = 200.0):
+                 rotation_arrow_angle_deg: float = 200.0,
+                 alignment_color_max_deg: float = 8.0,
+                 debug_print: bool = False):
         """
         Initialize 3D guidance widget renderer.
 
@@ -162,8 +164,12 @@ class GuidanceWidgetRenderer3D:
         )
         self.axes_radius_m = axes_radius_m
         self.camera_distance_m = camera_distance_m
-        self.camera_azimuth_deg = camera_azimuth_deg
-        self.camera_elevation_deg = camera_elevation_deg
+        self.camera_azimuth_deg = float(camera_azimuth_deg)
+        self.camera_elevation_deg = float(camera_elevation_deg)
+        # Captured so ``reset_camera`` can return to the constructor pose
+        # after live nudging.
+        self._default_camera_azimuth_deg = float(camera_azimuth_deg)
+        self._default_camera_elevation_deg = float(camera_elevation_deg)
         self.probe_origin_screen_y_from_top = float(probe_origin_screen_y_from_top)
         self.probe_origin_m = np.asarray(probe_origin_m, dtype=float)
         self.probe_pivot_axis = probe_pivot_axis
@@ -188,6 +194,12 @@ class GuidanceWidgetRenderer3D:
         self.rotation_arrow_radius_m = float(rotation_arrow_radius_m)
         self.rotation_arrow_offset_m = float(rotation_arrow_offset_m)
         self.rotation_arrow_angle_deg = float(rotation_arrow_angle_deg)
+        # Geodesic angle (deg) at or above which arrows render fully
+        # orange; at 0° they render fully green. Linear ramp between.
+        self.alignment_color_max_deg = float(alignment_color_max_deg)
+        # When on, every prediction-driven arrow update prints a one-line
+        # delta summary. Toggled at runtime via the 'd' hotkey.
+        self.debug_print = bool(debug_print)
 
         # Toggleable scene layers. ``predicted_probe`` is reserved for a
         # future ghost-probe overlay; the flag is accepted today so callers
@@ -206,6 +218,12 @@ class GuidanceWidgetRenderer3D:
         # original screen-corner pose and ``_HIDDEN_POSE``.
         self._reference_body_loaded = False
         self._reference_body_pose = np.eye(4)
+        # Frozen at ``calibrate`` time so the body's orientation lives in
+        # world space (matching the world-anchored probe) and visually
+        # rotates as the camera orbits. ``None`` while uncalibrated, in
+        # which case the body falls back to the legacy camera-relative
+        # orientation that keeps it laid out the same way in screen space.
+        self._body_orientation_world: Optional[np.ndarray] = None
         # Per-direction visibility for each arrow group. Multiple
         # rotation arrows can be lit at once when a prediction has both
         # a Y- and Z-axis component (e.g. "rotate up AND right");
@@ -217,7 +235,7 @@ class GuidanceWidgetRenderer3D:
         # Minimum |Euler angle| (degrees) for a predicted rotation
         # component to light its arrow. Below this, the prediction is
         # treated as noise and the arrow stays hidden.
-        self.rotation_arrow_threshold_deg = 3.0
+        self.rotation_arrow_threshold_deg = 1.0
         # Set in _setup_guidance_arrows after the probe geometry is known.
         self._tail_imu = np.zeros(3, dtype=float)
 
@@ -482,19 +500,19 @@ class GuidanceWidgetRenderer3D:
                 roughnessFactor=0.6,
                 alphaMode='BLEND'
             ),
-            # Guidance arrows: pure green, matte finish.
-            # Translation and rotation share the color family for now;
-            # split into separate materials in case they need to diverge
-            # later.
+            # Guidance arrows: low-roughness + slight metallic so each
+            # surface picks up its own specular highlight, helping the
+            # eye separate overlapping arrows that share the same base
+            # color.
             'arrow_translation': pyrender.MetallicRoughnessMaterial(
                 baseColorFactor=[0.0, 1.0, 0.0, 1.0],
-                metallicFactor=0.0,
-                roughnessFactor=1.0,
+                metallicFactor=0.25,
+                roughnessFactor=0.35,
             ),
             'arrow_rotation': pyrender.MetallicRoughnessMaterial(
                 baseColorFactor=[0.0, 1.0, 0.0, 1.0],
-                metallicFactor=0.0,
-                roughnessFactor=1.0,
+                metallicFactor=0.25,
+                roughnessFactor=0.35,
             ),
         }
     
@@ -719,6 +737,12 @@ class GuidanceWidgetRenderer3D:
         self.set_layer_visible(name, not self.is_layer_visible(name))
         return self.is_layer_visible(name)
 
+    def toggle_debug_print(self) -> bool:
+        """Flip the debug-print flag. Returns the new state."""
+        self.debug_print = not self.debug_print
+        print(f"🐛 debug_print = {self.debug_print}")
+        return self.debug_print
+
     def set_active_translation_arrow(self, direction: str) -> None:
         """Pick which translation guidance arrow renders.
 
@@ -836,6 +860,69 @@ class GuidanceWidgetRenderer3D:
         if abs(rz) >= thresh:
             self._rotation_arrow_visible["right" if rz > 0 else "left"] = True
 
+        if self.debug_print:
+            # trans-1/trans-2 are placeholders until translation prediction
+            # is implemented; rot-1=ry (up/down), rot-2=rz (right/left),
+            # roll=rx (long-axis twist). All in degrees.
+            print(
+                f"[delta] rot-1={ry:+6.1f}° rot-2={rz:+6.1f}° "
+                f"trans-1=    -- trans-2=    -- roll={rx:+6.1f}°"
+            )
+
+    def _alignment_color(self, angle_rad: float) -> list:
+        """Map a geodesic rotation angle to an RGBA arrow color.
+
+        Returns green at 0 rad and red at ``alignment_color_max_deg``,
+        linearly interpolated in RGB. Alpha is fixed at 1.0.
+        """
+        max_rad = max(np.deg2rad(self.alignment_color_max_deg), 1e-6)
+        t = float(np.clip(angle_rad / max_rad, 0.0, 1.0))
+        green = np.array([0.0, 1.0, 0.0])
+        red = np.array([1.0, 0.0, 0.0])
+        rgb = (1.0 - t) * green + t * red
+        return [float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0]
+
+    def _update_arrow_alignment_color(
+        self, rotation_prediction: Optional[np.ndarray]
+    ) -> None:
+        """Recolor every guidance arrow based on the predicted misalignment.
+
+        The geodesic distance from identity (``arccos((tr(R)-1)/2)``) is
+        the natural angular distance between the current and predicted
+        axes. ``pyrender.Mesh.from_trimesh`` deep-copies the supplied
+        material onto each primitive, so the per-primitive material is
+        the only one the shader sees — mutating the dict templates does
+        nothing on screen.
+        """
+        if rotation_prediction is None or self.renderer is None:
+            return
+        R3 = (
+            rotation_prediction[:3, :3]
+            if rotation_prediction.shape == (4, 4) else rotation_prediction
+        )
+        cos_angle = (float(np.trace(R3)) - 1.0) / 2.0
+        angle_rad = float(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
+        color = self._alignment_color(angle_rad)
+        arrow_node_names = (
+            [f"trans_arrow_{d}" for d in _TRANSLATION_DIRS]
+            + [f"rot_arrow_{d}" for d in _ROTATION_AXES]
+            + [f"roll_arrow_{d}" for d in _ROLL_AXES]
+        )
+        for name in arrow_node_names:
+            mesh = self.renderer.meshes.get(name)
+            if mesh is None:
+                continue
+            for primitive in mesh.primitives:
+                primitive.material.baseColorFactor = color
+        if self.debug_print:
+            max_rad = max(np.deg2rad(self.alignment_color_max_deg), 1e-6)
+            print(
+                f"[color] geodesic={np.rad2deg(angle_rad):5.1f}° "
+                f"max={self.alignment_color_max_deg:.1f}° "
+                f"t={angle_rad / max_rad:.2f} "
+                f"rgba=({color[0]:.2f},{color[1]:.2f},{color[2]:.2f},{color[3]:.2f})"
+            )
+
     def _compute_scene_diag_m(self) -> float:
         """Return the scene AABB diagonal length in meters.
 
@@ -906,6 +993,64 @@ class GuidanceWidgetRenderer3D:
         """Recompute camera framing from the current scene AABB."""
         self._setup_camera()
 
+    def _refresh_camera(self) -> None:
+        """Re-apply the camera pose and re-anchor camera-relative props.
+
+        ``_setup_camera`` rebuilds ``camera_pose`` from the current
+        azimuth/elevation/distance and re-aims the lights. The reference
+        body's screen-corner placement is camera-relative, so its pose
+        has to be recomputed against the new view.
+        """
+        self._setup_camera()
+        self._apply_reference_body_pose()
+
+    def _apply_reference_body_pose(self) -> None:
+        """Recompute and push the reference body's pose to the renderer.
+
+        Called whenever an input that feeds ``_compute_center_bottom_pose``
+        changes — camera nudges, calibration, or calibration reset. Skips
+        when the body is hidden so the hidden-pose stays in place; the
+        new pose still lives in ``_reference_body_pose`` and gets applied
+        the next time the layer is turned on.
+        """
+        if not self._reference_body_loaded or self.renderer is None:
+            return
+        self._reference_body_pose = self._compute_center_bottom_pose()
+        if self._layers_visible["reference_body"]:
+            self.renderer.set_pose(
+                "reference_body", self._reference_body_pose
+            )
+
+    def nudge_camera_azimuth(self, delta_deg: float) -> None:
+        """Rotate the camera around +Y by ``delta_deg``."""
+        self.camera_azimuth_deg = float(self.camera_azimuth_deg + delta_deg)
+        self._refresh_camera()
+        print(
+            f"📷 camera azimuth={self.camera_azimuth_deg:+.1f}° "
+            f"elevation={self.camera_elevation_deg:+.1f}°"
+        )
+
+    def nudge_camera_elevation(self, delta_deg: float) -> None:
+        """Pitch the camera by ``delta_deg``, clamped to avoid gimbal flip."""
+        self.camera_elevation_deg = float(np.clip(
+            self.camera_elevation_deg + delta_deg, -89.0, 89.0
+        ))
+        self._refresh_camera()
+        print(
+            f"📷 camera azimuth={self.camera_azimuth_deg:+.1f}° "
+            f"elevation={self.camera_elevation_deg:+.1f}°"
+        )
+
+    def reset_camera(self) -> None:
+        """Restore the default azimuth/elevation set at construction."""
+        self.camera_azimuth_deg = self._default_camera_azimuth_deg
+        self.camera_elevation_deg = self._default_camera_elevation_deg
+        self._refresh_camera()
+        print(
+            f"📷 camera reset (azimuth={self.camera_azimuth_deg:+.1f}° "
+            f"elevation={self.camera_elevation_deg:+.1f}°)"
+        )
+
     def _world_head_direction(self) -> np.ndarray:
         """Unit vector in the world XZ plane that the body reference's head
         (and the probe's tip after calibration) points toward.
@@ -971,6 +1116,24 @@ class GuidanceWidgetRenderer3D:
         # world basis into render rotations, swapping/flipping axes when
         # the two world frames disagreed (e.g., IMU +Z up vs render +Y up).
         self.calibration_matrix = R_target @ R_imu.T
+
+        # Lock the reference body's orientation to the world axes implied
+        # by the calibration view (head along the projected camera-right,
+        # face up along world +Y). Once frozen, camera nudges leave the
+        # orientation alone and the body visually rotates with the
+        # (also world-anchored) probe. Body-local axes per the asset:
+        # +Y head, +Z front (face), +X body-left.
+        head_dir = self._world_head_direction()
+        world_up = np.array([0.0, 1.0, 0.0])
+        body_y = head_dir
+        body_z = world_up
+        body_x = np.cross(body_y, body_z)
+        n = float(np.linalg.norm(body_x))
+        if n > 1e-9:
+            body_x = body_x / n
+        self._body_orientation_world = np.column_stack([body_x, body_y, body_z])
+        self._apply_reference_body_pose()
+
         print(
             f"✅ Probe calibrated (q=[{qw:.3f}, {qx:.3f}, "
             f"{qy:.3f}, {qz:.3f}])."
@@ -979,6 +1142,8 @@ class GuidanceWidgetRenderer3D:
     def reset_calibration(self):
         """Drop any prior calibration; render raw IMU rotation again."""
         self.calibration_matrix = np.eye(3)
+        self._body_orientation_world = None
+        self._apply_reference_body_pose()
         print("↩️  Probe calibration reset.")
 
     def _setup_reference_body(self):
@@ -1040,15 +1205,15 @@ class GuidanceWidgetRenderer3D:
     def _compute_center_bottom_pose(self) -> np.ndarray:
         """4x4 pose that places the body reference at the screen center-bottom.
 
-        Orientation is camera-relative, so the body always renders the
-        same way in screen space regardless of camera angle: lying on its
-        back, head pointing screen-right, chest facing screen-up (i.e.
-        viewed from the body's left side). Body-local axes for the
-        reference asset are +Y up (head), +Z front (face), +X body-left.
-
-        Adds back the camera's vertical shift (from
-        ``probe_origin_screen_y_from_top``) and then drops the body
-        toward the bottom edge of the frame.
+        Position is always camera-relative (the body stays anchored to the
+        screen-bottom regardless of view). Orientation is world-anchored
+        once ``calibrate`` has run — the body's axes are frozen to the
+        world directions captured at that moment, so subsequent camera
+        nudges rotate the body in step with the (also world-anchored)
+        probe. Before calibration, orientation falls back to camera-relative
+        so the legend reads consistently in screen space from launch.
+        Body-local axes for the reference asset: +Y head, +Z front (face),
+        +X body-left.
         """
         if self.camera_pose is None or self.camera_pos is None:
             return np.eye(4)
@@ -1071,9 +1236,12 @@ class GuidanceWidgetRenderer3D:
         )
 
         pose = np.eye(4)
-        pose[:3, 0] = toward_viewer   # body +X (body-left) → out of screen
-        pose[:3, 1] = right_world     # body +Y (head)      → screen-right
-        pose[:3, 2] = up_world        # body +Z (front)     → screen-up
+        if self._body_orientation_world is not None:
+            pose[:3, :3] = self._body_orientation_world
+        else:
+            pose[:3, 0] = toward_viewer   # body +X (body-left) → out of screen
+            pose[:3, 1] = right_world     # body +Y (head)      → screen-right
+            pose[:3, 2] = up_world        # body +Z (front)     → screen-up
         pose[:3, 3] = offset
         return pose
     
@@ -1249,6 +1417,10 @@ class GuidanceWidgetRenderer3D:
             self.update_rotation_arrows_from_prediction(
                 predicted_rotation_matrix
             )
+            # Recolor every arrow by the predicted misalignment magnitude:
+            # green when the current axes already match the predicted axes,
+            # ramping toward orange as the geodesic angle grows.
+            self._update_arrow_alignment_color(predicted_rotation_matrix)
         
         
         # Apply rotation to probe and current axes (needs 4x4). The probe

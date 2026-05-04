@@ -218,20 +218,52 @@ class GuidanceUI:
                 self._fps_frame_times.clear()
             print(f"{'✅' if self._show_fps else '⛔'} fps: {'on' if self._show_fps else 'off'}")
 
+        # 'd' — toggle the per-frame prediction-delta debug print.
+        def handle_toggle_debug():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_debug_print"):
+                return
+            renderer.toggle_debug_print()
+
+        # ',' '.' '\'' '/' — live camera nudges (azimuth / elevation).
+        # Step size matches probe_render.py.
+        camera_step_deg = 10.0
+
+        def make_nudge(method_name: str, delta_deg: float):
+            def handler():
+                renderer = self._guidance_widget_renderer
+                if renderer is None or not hasattr(renderer, method_name):
+                    return
+                getattr(renderer, method_name)(delta_deg)
+            return handler
+
+        handle_azimuth_minus = make_nudge("nudge_camera_azimuth", -camera_step_deg)
+        handle_azimuth_plus = make_nudge("nudge_camera_azimuth", +camera_step_deg)
+        handle_elevation_plus = make_nudge("nudge_camera_elevation", +camera_step_deg)
+        handle_elevation_minus = make_nudge("nudge_camera_elevation", -camera_step_deg)
+
+        # ';' — reset camera to the constructor's azimuth/elevation defaults.
+        def handle_reset_camera():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "reset_camera"):
+                return
+            renderer.reset_camera()
+
         # Register on both windows so the hotkeys work regardless of which
         # one has keyboard focus.
-        self._main_window.register_key_handler('a', handle_toggle_arrows)
-        self._main_window.register_key_handler('x', handle_toggle_axes)
-        self._main_window.register_key_handler('c', handle_calibrate)
-        self._main_window.register_key_handler('Shift+c', handle_reset_calibration)
-        self._main_window.register_key_handler('p', handle_toggle_patient)
-        self._main_window.register_key_handler('f', handle_toggle_fps)
-        self._guidance_window.register_key_handler('a', handle_toggle_arrows)
-        self._guidance_window.register_key_handler('x', handle_toggle_axes)
-        self._guidance_window.register_key_handler('c', handle_calibrate)
-        self._guidance_window.register_key_handler('Shift+c', handle_reset_calibration)
-        self._guidance_window.register_key_handler('p', handle_toggle_patient)
-        self._guidance_window.register_key_handler('f', handle_toggle_fps)
+        for window in (self._main_window, self._guidance_window):
+            window.register_key_handler('a', handle_toggle_arrows)
+            window.register_key_handler('x', handle_toggle_axes)
+            window.register_key_handler('c', handle_calibrate)
+            window.register_key_handler('Shift+c', handle_reset_calibration)
+            window.register_key_handler('p', handle_toggle_patient)
+            window.register_key_handler('f', handle_toggle_fps)
+            window.register_key_handler('d', handle_toggle_debug)
+            window.register_key_handler(',', handle_azimuth_minus)
+            window.register_key_handler('.', handle_azimuth_plus)
+            window.register_key_handler("'", handle_elevation_plus)
+            window.register_key_handler('/', handle_elevation_minus)
+            window.register_key_handler(';', handle_reset_camera)
 
     def run(self):
         """Run the main UI loop."""

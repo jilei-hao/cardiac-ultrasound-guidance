@@ -190,6 +190,28 @@ def main():
     window.register_key_handler("p", toggle_layer("predicted_axes"))
     window.register_key_handler("f", toggle_fps)
 
+    def toggle_debug():
+        renderer.toggle_debug_print()
+
+    window.register_key_handler("d", toggle_debug)
+
+    # Live camera nudges. 10° per press feels coarse enough to be useful
+    # without overshooting; press repeatedly to dial in the angle.
+    camera_step_deg = 10.0
+    window.register_key_handler(
+        ",", lambda: renderer.nudge_camera_azimuth(-camera_step_deg)
+    )
+    window.register_key_handler(
+        ".", lambda: renderer.nudge_camera_azimuth(+camera_step_deg)
+    )
+    window.register_key_handler(
+        "'", lambda: renderer.nudge_camera_elevation(+camera_step_deg)
+    )
+    window.register_key_handler(
+        "/", lambda: renderer.nudge_camera_elevation(-camera_step_deg)
+    )
+    window.register_key_handler(";", renderer.reset_camera)
+
     started = False
 
     try:
@@ -204,6 +226,8 @@ def main():
             "    Arrows:      ←/→/↑/↓ pick translation arrow, "
             "Shift+←/→/↑/↓ pick rotation arrow,\n"
             "                 'r' / 'Shift+r' pick roll arrow (ccw / cw).\n"
+            "    Camera:      ',' / '.' azimuth -/+, "
+            "'\\'' / '/' elevation +/-, ';' reset.\n"
             "    Quit:        'q' or Escape."
         )
 
