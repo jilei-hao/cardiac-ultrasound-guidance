@@ -335,6 +335,16 @@ class QtImageWindow(AbstractImageWindow):
             Qt.Key.Key_W: 'w',
             Qt.Key.Key_A: 'a',
             Qt.Key.Key_D: 'd',
+            # Punctuation used by camera nudge / reset hotkeys. Mapping
+            # these explicitly bypasses ``event.text()``, which on some
+            # macOS keyboard layouts can return empty for punctuation
+            # (the symptom: hotkey looks dead even though the key is
+            # being pressed).
+            Qt.Key.Key_Comma: ',',
+            Qt.Key.Key_Period: '.',
+            Qt.Key.Key_Apostrophe: "'",
+            Qt.Key.Key_Slash: '/',
+            Qt.Key.Key_Semicolon: ';',
         }
         
         qt_key = event.key()

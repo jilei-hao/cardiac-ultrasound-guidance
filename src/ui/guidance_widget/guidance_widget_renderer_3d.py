@@ -218,12 +218,16 @@ class GuidanceWidgetRenderer3D:
         # original screen-corner pose and ``_HIDDEN_POSE``.
         self._reference_body_loaded = False
         self._reference_body_pose = np.eye(4)
-        # Frozen at ``calibrate`` time so the body's orientation lives in
-        # world space (matching the world-anchored probe) and visually
-        # rotates as the camera orbits. ``None`` while uncalibrated, in
-        # which case the body falls back to the legacy camera-relative
-        # orientation that keeps it laid out the same way in screen space.
+        # Body orientation locked in world space so subsequent camera
+        # nudges leave the orientation alone — the body then visually
+        # rotates with the (also world-anchored) probe. Captured first
+        # at construction (right after ``_setup_camera`` runs), and
+        # re-captured on every ``calibrate`` call so the body re-aligns
+        # with the operator's freshly chosen calibration view.
+        # ``_default_body_orientation_world`` is the construction-time
+        # snapshot that ``reset_calibration`` reverts to.
         self._body_orientation_world: Optional[np.ndarray] = None
+        self._default_body_orientation_world: Optional[np.ndarray] = None
         # Per-direction visibility for each arrow group. Multiple
         # rotation arrows can be lit at once when a prediction has both
         # a Y- and Z-axis component (e.g. "rotate up AND right");
@@ -1004,6 +1008,24 @@ class GuidanceWidgetRenderer3D:
         self._setup_camera()
         self._apply_reference_body_pose()
 
+    def _capture_body_world_orientation(self) -> np.ndarray:
+        """Build a 3x3 body-axes-in-world matrix from the current view.
+
+        Body-local axes: +Y head, +Z front (face), +X body-left.
+        The body lies on its back, so head points along the projected
+        camera-right (``_world_head_direction``) and face points world up.
+        ``+X = +Y × +Z`` keeps the basis right-handed.
+        """
+        head_dir = self._world_head_direction()
+        world_up = np.array([0.0, 1.0, 0.0])
+        body_y = head_dir
+        body_z = world_up
+        body_x = np.cross(body_y, body_z)
+        n = float(np.linalg.norm(body_x))
+        if n > 1e-9:
+            body_x = body_x / n
+        return np.column_stack([body_x, body_y, body_z])
+
     def _apply_reference_body_pose(self) -> None:
         """Recompute and push the reference body's pose to the renderer.
 
@@ -1117,21 +1139,12 @@ class GuidanceWidgetRenderer3D:
         # the two world frames disagreed (e.g., IMU +Z up vs render +Y up).
         self.calibration_matrix = R_target @ R_imu.T
 
-        # Lock the reference body's orientation to the world axes implied
-        # by the calibration view (head along the projected camera-right,
-        # face up along world +Y). Once frozen, camera nudges leave the
-        # orientation alone and the body visually rotates with the
-        # (also world-anchored) probe. Body-local axes per the asset:
-        # +Y head, +Z front (face), +X body-left.
-        head_dir = self._world_head_direction()
-        world_up = np.array([0.0, 1.0, 0.0])
-        body_y = head_dir
-        body_z = world_up
-        body_x = np.cross(body_y, body_z)
-        n = float(np.linalg.norm(body_x))
-        if n > 1e-9:
-            body_x = body_x / n
-        self._body_orientation_world = np.column_stack([body_x, body_y, body_z])
+        # Re-freeze the reference body's orientation against the world axes
+        # implied by the calibration view (head along the projected
+        # camera-right, face up along world +Y). The body had a
+        # construction-time freeze; this overwrites it with the
+        # operator's chosen calibration view.
+        self._body_orientation_world = self._capture_body_world_orientation()
         self._apply_reference_body_pose()
 
         print(
@@ -1142,8 +1155,11 @@ class GuidanceWidgetRenderer3D:
     def reset_calibration(self):
         """Drop any prior calibration; render raw IMU rotation again."""
         self.calibration_matrix = np.eye(3)
-        self._body_orientation_world = None
-        self._apply_reference_body_pose()
+        if self._default_body_orientation_world is not None:
+            self._body_orientation_world = (
+                self._default_body_orientation_world.copy()
+            )
+            self._apply_reference_body_pose()
         print("↩️  Probe calibration reset.")
 
     def _setup_reference_body(self):
@@ -1186,6 +1202,12 @@ class GuidanceWidgetRenderer3D:
             if body_size > 0 and target_size > 0:
                 body.apply_scale(target_size / body_size)
 
+        # Freeze the body's world-space orientation against the initial
+        # camera so future camera nudges leave it alone. ``calibrate``
+        # overwrites this; ``reset_calibration`` reverts to this default.
+        body_orientation = self._capture_body_world_orientation()
+        self._body_orientation_world = body_orientation
+        self._default_body_orientation_world = body_orientation.copy()
         pose = self._compute_center_bottom_pose()
 
         import pyrender
