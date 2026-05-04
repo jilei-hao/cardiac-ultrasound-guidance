@@ -11,7 +11,7 @@ from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_
 import inference.pose_classification.pose_classification as pc
 from inference.pose_classification.pose_classification import PoseClassifierResultPooler
 import ui.image_helpers as ih
-from ui.guidance_widget import create_guidance_widget_renderer
+from ui.guidance_widget import GuidanceWidgetRenderer3D
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import inference.inference_helper as ihp
 from inference.rotation.rotation_predictor import create_rotation_predictor
@@ -211,25 +211,14 @@ def run_event_loop(options, config):
   # Initialize probe renderer (loads probe once for efficiency)
   print("Initializing probe renderer...")
 
-  # Initialize probe renderer with automatic 3D/2D selection and fallback
-  probe_renderer = create_guidance_widget_renderer(
+  probe_renderer = GuidanceWidgetRenderer3D(
     probe_path=config["probe_mesh_path"],
-    renderer_type='auto',  # Try 3D first, fallback to 2D
-    fallback_to_2d=True,
-    # Common parameters (work for both 2D and 3D)
-    background_color=(0, 0, 0),  # Black background
+    background_color=(0, 0, 0, 1),
     render_mode='fullscreen',
     window_size=(256, 256),
-    # 2D-specific parameters (ignored by 3D renderer)
-    predicted_axis_opacity=0.6,  # 60% opacity for predicted axes
-    axis_thickness=3,
-    axis_labels=('x', 'y', 'z'),  
-    lod_level=0.1,  # Level of detail
-    probe_scale=0.7,  # Probe size relative to axes (70% of axis length)
-    rotation_amplification=5.0,  # Amplification factor for rotation prediction
-    # 3D-specific parameters (ignored by 2D renderer)
-    scale_factor=2.0,
-    wireframe=False
+    rotation_amplification=5.0,
+    probe_units='cm',
+    wireframe=False,
   )
   
 

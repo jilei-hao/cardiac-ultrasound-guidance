@@ -335,19 +335,41 @@ class QtImageWindow(AbstractImageWindow):
             Qt.Key.Key_W: 'w',
             Qt.Key.Key_A: 'a',
             Qt.Key.Key_D: 'd',
+            # Punctuation used by camera nudge / reset hotkeys. Mapping
+            # these explicitly bypasses ``event.text()``, which on some
+            # macOS keyboard layouts can return empty for punctuation
+            # (the symptom: hotkey looks dead even though the key is
+            # being pressed).
+            Qt.Key.Key_Comma: ',',
+            Qt.Key.Key_Period: '.',
+            Qt.Key.Key_Apostrophe: "'",
+            Qt.Key.Key_Slash: '/',
+            Qt.Key.Key_Semicolon: ';',
         }
         
         qt_key = event.key()
-        
+
         # Try to get mapped key
         if qt_key in key_map:
             key_str = key_map[qt_key]
         else:
             # Try to get text representation for other keys
             key_str = event.text()
-        
-        if key_str:
-            self._handle_key_event(key_str)
+
+        if not key_str:
+            return
+
+        # Prepend "Shift+" when shift is held. Arrow/named keys pass
+        # through ``key_map`` and never carry shift state in their text
+        # form, so the prefix is the only signal. Letter keys also pass
+        # through ``key_map`` (always lowercased), so we need the prefix
+        # there too — without it, ``Shift+r`` would dispatch to the
+        # ``r`` handler, masking the shifted binding.
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            key_str = f'Shift+{key_str}'
+
+        self._handle_key_event(key_str)
     
     def _on_close_event(self, event):
         """

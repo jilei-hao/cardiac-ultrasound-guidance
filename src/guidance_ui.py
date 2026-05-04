@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass
 import os
 import time
@@ -8,7 +9,6 @@ from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_dual_window_setup
 from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
-from ui.guidance_widget.guidance_widget_renderer_2d import GuidanceWidgetRenderer2D
 from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 from data_access.simulator import FrameDataSimulator
@@ -19,7 +19,6 @@ from common.application_settings import ApplicationSettings
 class GuidanceUIConfig:
     env_config: dict
     input_source: str # simulator, clarius, screen
-    force_2d_guidance_widget: bool = False
     frames_folder: str = None
     screen_capture_window_title: str = "Input"
     clarius_ip: str = None
@@ -48,6 +47,12 @@ class GuidanceUI:
         self._logger = logger
         # Initialize application settings
         self._app_settings = ApplicationSettings()
+        # Latest IMU quaternion, captured each frame so the calibration
+        # hotkey can hand the renderer the operator's current pose.
+        self._latest_imu_quat = (1.0, 0.0, 0.0, 0.0)
+        # FPS readout state, toggled by the 'f' hotkey.
+        self._show_fps = False
+        self._fps_frame_times: deque = deque(maxlen=30)
     
     def initialize(self):
         """Initialize components"""
@@ -89,31 +94,17 @@ class GuidanceUI:
             color_legend_png_path=self._env_config["landmark_color_legend_png_path"]
         )
 
-        if self._config.force_2d_guidance_widget:
-            self._guidance_widget_renderer = GuidanceWidgetRenderer2D(
-                self._env_config["probe_mesh_path"],
-                background_color=(0, 0, 0),
-                predicted_axis_opacity=0.6, #0-1
-                axis_thickness=2,
-                axis_colors=((200, 150, 100), (200, 180, 220), (150, 220, 200)),
-                axis_labels=('x', 'y', 'z'),
-                lod_level=0.25, #mesh simplification level, 0-1, 1 = full detail
-                probe_scale=0.7, #probe size relative to axes, 0-1
-                rotation_amplification=3.0,  # Amplification factor for rotation prediction
-                render_mode='fullscreen',
-                window_size=(512, 512),
-            )
-        else:
-            self._guidance_widget_renderer = GuidanceWidgetRenderer3D(
-                self._env_config["probe_mesh_path"],
-                background_color=(0, 0, 0, 1),
-                scale_factor=3.0,
-                 wireframe=False,
-                 window_size=(640, 480),
-                 render_mode='fullscreen',
-                 rotation_amplification=3.0,
-                 legend_image_path = self._env_config["guidance_widget_legend_png_path"]
-            )
+        self._guidance_widget_renderer = GuidanceWidgetRenderer3D(
+            self._env_config["probe_mesh_path"],
+            background_color=(0, 0, 0, 1),
+            wireframe=False,
+            window_size=(512, 512),
+            render_mode='fullscreen',
+            rotation_amplification=3.0,
+            legend_image_path=self._env_config["guidance_widget_legend_png_path"],
+            probe_units='cm',
+            reference_body_path=self._env_config.get("reference_body_path"),
+        )
 
         # Initialize the data streamer
         if self._config.input_source == "simulator":
@@ -134,7 +125,14 @@ class GuidanceUI:
             raise ValueError(f"🛑 Error: Unknown input source '{self._config.input_source}'.")
 
     def _create_key_bindings(self):
-        """Create key bindings for the UI windows."""
+        """Create key bindings for the UI windows.
+
+        Precondition: both ``_main_window`` and ``_guidance_window`` have
+        been assigned in ``initialize``. Asserts narrow the type for the
+        registration calls below.
+        """
+        assert self._main_window is not None
+        assert self._guidance_window is not None
 
         # Quit
         def handle_quit():
@@ -166,6 +164,106 @@ class GuidanceUI:
                 self._app_settings.show_overlay = True
 
         self._main_window.register_key_handler('r', handle_toggle_overlay)
+
+        # Renderer is assigned later in ``initialize`` (after this method
+        # runs), so handlers must dereference ``self._guidance_widget_renderer``
+        # at call time rather than capturing it now.
+
+        # 'a' — toggle the guidance arrows layer (translation, rotation, roll).
+        def handle_toggle_arrows():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_layer"):
+                return
+            on = renderer.toggle_layer("guidance_arrows")
+            print(f"{'✅' if on else '⛔'} guidance arrows: {'on' if on else 'off'}")
+
+        # 'x' — toggle probe + predicted axes together. Uses current_axes as
+        # the source of truth so a single press flips both layers in lockstep.
+        def handle_toggle_axes():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "set_layer_visible"):
+                return
+            new_state = not renderer.is_layer_visible("current_axes")
+            renderer.set_layer_visible("current_axes", new_state)
+            renderer.set_layer_visible("predicted_axes", new_state)
+            print(f"{'✅' if new_state else '⛔'} axes: {'on' if new_state else 'off'}")
+
+        # 'c' — calibrate using the most recent IMU sample.
+        def handle_calibrate():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "calibrate"):
+                return
+            qw, qx, qy, qz = self._latest_imu_quat
+            renderer.calibrate(qw, qx, qy, qz)
+
+        # 'Shift+c' — drop calibration, render raw IMU rotation again.
+        def handle_reset_calibration():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "reset_calibration"):
+                return
+            renderer.reset_calibration()
+
+        # 'p' — toggle the reference patient mesh shown in the corner.
+        def handle_toggle_patient():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_layer"):
+                return
+            on = renderer.toggle_layer("reference_body")
+            print(f"{'✅' if on else '⛔'} patient mesh: {'on' if on else 'off'}")
+
+        # 'f' — toggle the FPS readout drawn on the main frame.
+        def handle_toggle_fps():
+            self._show_fps = not self._show_fps
+            if not self._show_fps:
+                self._fps_frame_times.clear()
+            print(f"{'✅' if self._show_fps else '⛔'} fps: {'on' if self._show_fps else 'off'}")
+
+        # 'd' — toggle the per-frame prediction-delta debug print.
+        def handle_toggle_debug():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_debug_print"):
+                return
+            renderer.toggle_debug_print()
+
+        # ',' '.' '\'' '/' — live camera nudges (azimuth / elevation).
+        # Step size matches probe_render.py.
+        camera_step_deg = 10.0
+
+        def make_nudge(method_name: str, delta_deg: float):
+            def handler():
+                renderer = self._guidance_widget_renderer
+                if renderer is None or not hasattr(renderer, method_name):
+                    return
+                getattr(renderer, method_name)(delta_deg)
+            return handler
+
+        handle_azimuth_minus = make_nudge("nudge_camera_azimuth", -camera_step_deg)
+        handle_azimuth_plus = make_nudge("nudge_camera_azimuth", +camera_step_deg)
+        handle_elevation_plus = make_nudge("nudge_camera_elevation", +camera_step_deg)
+        handle_elevation_minus = make_nudge("nudge_camera_elevation", -camera_step_deg)
+
+        # ';' — reset camera to the constructor's azimuth/elevation defaults.
+        def handle_reset_camera():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "reset_camera"):
+                return
+            renderer.reset_camera()
+
+        # Register on both windows so the hotkeys work regardless of which
+        # one has keyboard focus.
+        for window in (self._main_window, self._guidance_window):
+            window.register_key_handler('a', handle_toggle_arrows)
+            window.register_key_handler('x', handle_toggle_axes)
+            window.register_key_handler('c', handle_calibrate)
+            window.register_key_handler('Shift+c', handle_reset_calibration)
+            window.register_key_handler('p', handle_toggle_patient)
+            window.register_key_handler('f', handle_toggle_fps)
+            window.register_key_handler('d', handle_toggle_debug)
+            window.register_key_handler(',', handle_azimuth_minus)
+            window.register_key_handler('.', handle_azimuth_plus)
+            window.register_key_handler("'", handle_elevation_plus)
+            window.register_key_handler('/', handle_elevation_minus)
+            window.register_key_handler(';', handle_reset_camera)
 
     def run(self):
         """Run the main UI loop."""
@@ -200,6 +298,7 @@ class GuidanceUI:
                     qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
                 else:
                     qw, qx, qy, qz = 1.0, 1.0, 1.0, 1.0  # Default quaternion if no IMU data
+                self._latest_imu_quat = (qw, qx, qy, qz)
 
                 # Preprocess frame
                 orig_gray_512 = cv2.cvtColor(orig_frame, cv2.COLOR_BGR2GRAY)
@@ -226,6 +325,14 @@ class GuidanceUI:
                     qw, qx, qy, qz,
                     inference_output.rotation_prediction
                 )
+
+                if self._show_fps:
+                    self._fps_frame_times.append(time.perf_counter())
+                    if len(self._fps_frame_times) >= 2:
+                        elapsed = self._fps_frame_times[-1] - self._fps_frame_times[0]
+                        if elapsed > 0:
+                            fps = (len(self._fps_frame_times) - 1) / elapsed
+                            self._draw_fps(out_frame_main_bgr, fps)
 
                 out_frame_main = cv2.cvtColor(out_frame_main_bgr, cv2.COLOR_BGR2RGB)
                 out_frame_guidance = cv2.cvtColor(out_frame_guidance_bgr, cv2.COLOR_BGR2RGB)
@@ -258,6 +365,23 @@ class GuidanceUI:
             self._data_streamer.stop()
         print("🛑 Guidance UI shutdown complete.")
 
+    @staticmethod
+    def _draw_fps(frame_bgr: np.ndarray, fps: float) -> None:
+        """Draw an FPS readout in the top-right corner (in-place)."""
+        text = f"{fps:5.1f} FPS"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.6
+        thickness = 2
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+        w = frame_bgr.shape[1]
+        margin = 10
+        x = w - tw - margin
+        y = margin + th
+        cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
+                    (0, 0, 0), thickness + 1, cv2.LINE_AA)
+        cv2.putText(frame_bgr, text, (x, y), font, scale,
+                    (0, 255, 0), thickness, cv2.LINE_AA)
+
     
 
 
@@ -273,7 +397,6 @@ def main():
     parser.add_argument("--clarius-port", type=int, default=5828, help="Clarius probe port number")
     parser.add_argument("--frames-folder", type=str, default=None, help="Folder containing frames for simulator")
     parser.add_argument("--capture-window-title", type=str, default="Input", help="Window title for screen capture")
-    parser.add_argument("--force-2d", action="store_true", default=False, help="Force use of 2D guidance widget")
     parser.add_argument("--window-size", type=int, default=512, help="Window size for the UI windows")
 
     options = parser.parse_args()
@@ -288,13 +411,16 @@ def main():
             "probe_mesh_path": os.getenv("PROBE_MESH_PATH", "assets/transducer.stl"),
             "landmark_color_legend_png_path": os.getenv("LANDMARK_COLOR_LEGEND_PNG_PATH", "assets/4ch-legend_static_v1.png"),
             "guidance_widget_legend_png_path": os.getenv("GUIDANCE_WIDGET_LEGEND_PNG_PATH", "assets/guidance-widget-legend_v1.png"),
+            "reference_body_path": os.getenv(
+                "REFERENCE_BODY_PATH",
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "assets", "body_model.obj"),
+            ),
         },
         input_source=options.source,
         frames_folder=options.frames_folder,
         screen_capture_window_title=options.capture_window_title,
         clarius_ip=options.clarius_ip,
         clarius_port=options.clarius_port,
-        force_2d_guidance_widget=options.force_2d,
         window_size=options.window_size
     )
 

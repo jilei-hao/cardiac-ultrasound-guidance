@@ -1,7 +1,12 @@
 #!/bin/bash
 
 # Get project root directory (always relative to this script location)
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -n "$ZSH_VERSION" ]; then
+    SCRIPT_PATH="${(%):-%x}"
+else
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+fi
+PROJECT_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 cast_api_dir="${PROJECT_ROOT}/src/data_access/clarius"
 
 # Validate project structure

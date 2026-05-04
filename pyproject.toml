@@ -70,6 +70,7 @@ dev = [
 cusg-legacy-main = "legacy_main:main"
 cusg-guidance-ui = "guidance_ui:main"
 cusg-record = "record:main"
+cusg-probe-render = "probe_render:main"
 test-clarius-windows = "data_access.clarius.test_with_qt:main"
 
 [project.urls]
