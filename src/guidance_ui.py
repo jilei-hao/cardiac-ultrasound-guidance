@@ -9,7 +9,6 @@ from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_dual_window_setup
 from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
-from ui.guidance_widget.guidance_widget_renderer_2d import GuidanceWidgetRenderer2D
 from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 from data_access.simulator import FrameDataSimulator
@@ -20,7 +19,6 @@ from common.application_settings import ApplicationSettings
 class GuidanceUIConfig:
     env_config: dict
     input_source: str # simulator, clarius, screen
-    force_2d_guidance_widget: bool = False
     frames_folder: str = None
     screen_capture_window_title: str = "Input"
     clarius_ip: str = None
@@ -96,32 +94,17 @@ class GuidanceUI:
             color_legend_png_path=self._env_config["landmark_color_legend_png_path"]
         )
 
-        if self._config.force_2d_guidance_widget:
-            self._guidance_widget_renderer = GuidanceWidgetRenderer2D(
-                self._env_config["probe_mesh_path"],
-                background_color=(0, 0, 0),
-                predicted_axis_opacity=0.6, #0-1
-                axis_thickness=2,
-                axis_colors=((200, 150, 100), (200, 180, 220), (150, 220, 200)),
-                axis_labels=('x', 'y', 'z'),
-                lod_level=0.25, #mesh simplification level, 0-1, 1 = full detail
-                probe_scale=0.7, #probe size relative to axes, 0-1
-                rotation_amplification=3.0,  # Amplification factor for rotation prediction
-                render_mode='fullscreen',
-                window_size=(512, 512),
-            )
-        else:
-            self._guidance_widget_renderer = GuidanceWidgetRenderer3D(
-                self._env_config["probe_mesh_path"],
-                background_color=(0, 0, 0, 1),
-                wireframe=False,
-                window_size=(512, 512),
-                render_mode='fullscreen',
-                rotation_amplification=3.0,
-                legend_image_path=self._env_config["guidance_widget_legend_png_path"],
-                probe_units='cm',
-                reference_body_path=self._env_config.get("reference_body_path"),
-            )
+        self._guidance_widget_renderer = GuidanceWidgetRenderer3D(
+            self._env_config["probe_mesh_path"],
+            background_color=(0, 0, 0, 1),
+            wireframe=False,
+            window_size=(512, 512),
+            render_mode='fullscreen',
+            rotation_amplification=3.0,
+            legend_image_path=self._env_config["guidance_widget_legend_png_path"],
+            probe_units='cm',
+            reference_body_path=self._env_config.get("reference_body_path"),
+        )
 
         # Initialize the data streamer
         if self._config.input_source == "simulator":
@@ -382,7 +365,6 @@ def main():
     parser.add_argument("--clarius-port", type=int, default=5828, help="Clarius probe port number")
     parser.add_argument("--frames-folder", type=str, default=None, help="Folder containing frames for simulator")
     parser.add_argument("--capture-window-title", type=str, default="Input", help="Window title for screen capture")
-    parser.add_argument("--force-2d", action="store_true", default=False, help="Force use of 2D guidance widget")
     parser.add_argument("--window-size", type=int, default=512, help="Window size for the UI windows")
 
     options = parser.parse_args()
@@ -407,7 +389,6 @@ def main():
         screen_capture_window_title=options.capture_window_title,
         clarius_ip=options.clarius_ip,
         clarius_port=options.clarius_port,
-        force_2d_guidance_widget=options.force_2d,
         window_size=options.window_size
     )
 

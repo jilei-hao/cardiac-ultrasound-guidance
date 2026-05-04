@@ -1,9 +1,13 @@
+# NOTE: Retained for record keeping. The project no longer wires the 2D
+# renderer into the live UI — see GuidanceWidgetRenderer3D for the active
+# implementation.
+
 import numpy as np
 import cv2
 import math
 from scipy.spatial.transform import Rotation as R
 from ..mesh_helper import load_stl_vertices
-from .guidance_widget_renderer import GuidanceWidgetRenderer
+
 
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """Convert quaternion to 3x3 rotation matrix"""
@@ -18,10 +22,10 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     ], dtype=float)
     return R
 
-class GuidanceWidgetRenderer2D(GuidanceWidgetRenderer):
+class GuidanceWidgetRenderer2D:
     """Probe and axis renderer with configurable parameters."""
-    
-    def __init__(self, probe_path, 
+
+    def __init__(self, probe_path,
                  background_color=(0, 0, 0),
                  predicted_axis_opacity=0.6, #0-1
                  axis_thickness=2,
@@ -31,11 +35,9 @@ class GuidanceWidgetRenderer2D(GuidanceWidgetRenderer):
                  probe_scale=0.7, #probe size relative to axes, 0-1
                  rotation_amplification=3.0,  # Amplification factor for rotation prediction
                  render_mode='fullscreen',
-                 window_size=(512, 512),
-                 **kwargs):
-        # Initialize parent class
-        super().__init__(probe_path, **kwargs)
-        
+                 window_size=(512, 512)):
+        self.probe_path = probe_path
+
         # Store 2D-specific parameters
         self.background_color = background_color
         self.predicted_axis_opacity = predicted_axis_opacity

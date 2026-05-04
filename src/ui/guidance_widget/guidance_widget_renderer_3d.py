@@ -13,7 +13,6 @@ from scipy.spatial.transform import Rotation as R
 from typing import Optional, Union
 
 from .arrow_builders import create_curved_arrow, create_straight_arrow
-from .guidance_widget_renderer import GuidanceWidgetRenderer
 from ..generic_3d_renderer import (
     Generic3DRenderer,
     _resolve_meters_per_unit,
@@ -61,7 +60,7 @@ _ROLL_AXES = {
 }
 
 
-class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
+class GuidanceWidgetRenderer3D:
     """
     3D guidance widget renderer with probe mesh and coordinate axes
     visualization. All scene coordinates are in meters.
@@ -90,15 +89,11 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  reference_body_path: Optional[str] = None,
                  reference_body_units: Union[str, float] = 'cm',
                  reference_body_scale_ratio: float = 0.75,
-                 reference_body_corner: str = 'bottom-left',
-                 reference_body_margin: float = 0.78,
-                 reference_body_h_margin: Optional[float] = 0.5,
                  translation_arrow_length_m: float = 0.09,
                  translation_arrow_offset_m: float = 0.025,
                  rotation_arrow_radius_m: float = 0.0375,
                  rotation_arrow_offset_m: float = 0.025,
-                 rotation_arrow_angle_deg: float = 200.0,
-                 **kwargs):
+                 rotation_arrow_angle_deg: float = 200.0):
         """
         Initialize 3D guidance widget renderer.
 
@@ -150,10 +145,8 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 composed matrix sends mesh +Y → IMU +X (long axis) and
                 mesh +Z → IMU -Z (button-out at +Z). Set None for a
                 pre-aligned mesh.
-            **kwargs: Additional configuration parameters.
         """
-        super().__init__(probe_path, **kwargs)
-
+        self.probe_path = probe_path
         self.background_color = background_color
         self.wireframe = wireframe
         self.rotation_amplification = rotation_amplification
@@ -189,13 +182,6 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self.reference_body_path = reference_body_path
         self.reference_body_units = reference_body_units
         self.reference_body_scale_ratio = float(reference_body_scale_ratio)
-        self.reference_body_corner = reference_body_corner
-        self.reference_body_margin = float(reference_body_margin)
-        self.reference_body_h_margin = (
-            float(reference_body_h_margin)
-            if reference_body_h_margin is not None
-            else float(reference_body_margin)
-        )
 
         self.translation_arrow_length_m = float(translation_arrow_length_m)
         self.translation_arrow_offset_m = float(translation_arrow_offset_m)
@@ -1030,12 +1016,12 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
 
         if self.probe_mesh is not None and hasattr(self.probe_mesh, 'extents'):
             probe_size = float(np.max(self.probe_mesh.extents))
-            target_size = probe_size * self.reference_body_scale_ratio
+            target_size = probe_size * self.reference_body_scale_ratio * 3.0
             body_size = float(np.max(body.extents))
             if body_size > 0 and target_size > 0:
                 body.apply_scale(target_size / body_size)
 
-        pose = self._compute_corner_pose(self.reference_body_corner)
+        pose = self._compute_center_bottom_pose()
 
         import pyrender
         body_material = pyrender.MetallicRoughnessMaterial(
@@ -1051,45 +1037,38 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         self._reference_body_pose = pose
         self._reference_body_loaded = True
 
-    def _compute_corner_pose(self, corner: str) -> np.ndarray:
-        """4x4 pose that places the body reference at a screen corner.
+    def _compute_center_bottom_pose(self) -> np.ndarray:
+        """4x4 pose that places the body reference at the screen center-bottom.
 
-        Both position and orientation are camera-relative, so the body
-        always renders the same way in screen space regardless of camera
-        angle: lying on its back, head pointing screen-right, chest facing
-        screen-up (i.e. viewed from the body's left side). That makes it a
-        stable anatomical reference even when the camera is tilted to
-        reveal the top face of the calibrated probe. Body-local axes for
-        the reference asset are +Y up (head), +Z front (face), +X body-
-        left.
+        Orientation is camera-relative, so the body always renders the
+        same way in screen space regardless of camera angle: lying on its
+        back, head pointing screen-right, chest facing screen-up (i.e.
+        viewed from the body's left side). Body-local axes for the
+        reference asset are +Y up (head), +Z front (face), +X body-left.
 
-        The corner offset adds back the camera's vertical shift (from
-        ``probe_origin_screen_y_from_top``) so the body stays anchored to
-        the corner after the camera was translated up.
+        Adds back the camera's vertical shift (from
+        ``probe_origin_screen_y_from_top``) and then drops the body
+        toward the bottom edge of the frame.
         """
         if self.camera_pose is None or self.camera_pos is None:
             return np.eye(4)
 
         distance = float(np.linalg.norm(self.camera_pos))
-        aspect = self.window_size[0] / max(1, self.window_size[1])
         half_h = distance * np.tan(self.camera_fov / 2.0)
-        half_w = half_h * aspect
-
-        sign_x = +1 if 'right' in corner else -1
-        sign_y = +1 if 'top' in corner else -1
 
         right_world = self.camera_pose[:3, 0]
         up_world = self.camera_pose[:3, 1]
         toward_viewer = self.camera_pose[:3, 2]
 
-        offset = (
-            right_world * (sign_x * half_w * self.reference_body_h_margin)
-            + up_world * (sign_y * half_h * self.reference_body_margin)
-        )
-        # Counteract the camera's vertical translation so the body lands
-        # in the same screen corner regardless of ``y_from_top``.
+        # Fraction of half-height to push the body below screen center.
+        # 0.0 = screen middle, 1.0 = bottom edge. 0.6 keeps the body's
+        # center well into the lower half while leaving a margin so its
+        # silhouette doesn't clip the bottom of the frame.
+        bottom_fraction = 0.6
         y_from_top = self.probe_origin_screen_y_from_top
-        offset = offset + up_world * ((2.0 * y_from_top - 1.0) * half_h)
+        offset = up_world * (
+            (2.0 * y_from_top - 1.0) * half_h - bottom_fraction * half_h
+        )
 
         pose = np.eye(4)
         pose[:3, 0] = toward_viewer   # body +X (body-left) → out of screen
