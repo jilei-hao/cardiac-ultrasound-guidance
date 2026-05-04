@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass
 import os
 import time
@@ -48,6 +49,12 @@ class GuidanceUI:
         self._logger = logger
         # Initialize application settings
         self._app_settings = ApplicationSettings()
+        # Latest IMU quaternion, captured each frame so the calibration
+        # hotkey can hand the renderer the operator's current pose.
+        self._latest_imu_quat = (1.0, 0.0, 0.0, 0.0)
+        # FPS readout state, toggled by the 'f' hotkey.
+        self._show_fps = False
+        self._fps_frame_times: deque = deque(maxlen=30)
     
     def initialize(self):
         """Initialize components"""
@@ -134,7 +141,14 @@ class GuidanceUI:
             raise ValueError(f"🛑 Error: Unknown input source '{self._config.input_source}'.")
 
     def _create_key_bindings(self):
-        """Create key bindings for the UI windows."""
+        """Create key bindings for the UI windows.
+
+        Precondition: both ``_main_window`` and ``_guidance_window`` have
+        been assigned in ``initialize``. Asserts narrow the type for the
+        registration calls below.
+        """
+        assert self._main_window is not None
+        assert self._guidance_window is not None
 
         # Quit
         def handle_quit():
@@ -166,6 +180,64 @@ class GuidanceUI:
                 self._app_settings.show_overlay = True
 
         self._main_window.register_key_handler('r', handle_toggle_overlay)
+
+        # Renderer is assigned later in ``initialize`` (after this method
+        # runs), so handlers must dereference ``self._guidance_widget_renderer``
+        # at call time rather than capturing it now.
+
+        # 'a' — toggle the guidance arrows layer (translation, rotation, roll).
+        def handle_toggle_arrows():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_layer"):
+                return
+            on = renderer.toggle_layer("guidance_arrows")
+            print(f"{'✅' if on else '⛔'} guidance arrows: {'on' if on else 'off'}")
+
+        # 'x' — toggle probe + predicted axes together. Uses current_axes as
+        # the source of truth so a single press flips both layers in lockstep.
+        def handle_toggle_axes():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "set_layer_visible"):
+                return
+            new_state = not renderer.is_layer_visible("current_axes")
+            renderer.set_layer_visible("current_axes", new_state)
+            renderer.set_layer_visible("predicted_axes", new_state)
+            print(f"{'✅' if new_state else '⛔'} axes: {'on' if new_state else 'off'}")
+
+        # 'c' — calibrate using the most recent IMU sample.
+        def handle_calibrate():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "calibrate"):
+                return
+            qw, qx, qy, qz = self._latest_imu_quat
+            renderer.calibrate(qw, qx, qy, qz)
+
+        # 'Shift+c' — drop calibration, render raw IMU rotation again.
+        def handle_reset_calibration():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "reset_calibration"):
+                return
+            renderer.reset_calibration()
+
+        # 'f' — toggle the FPS readout drawn on the main frame.
+        def handle_toggle_fps():
+            self._show_fps = not self._show_fps
+            if not self._show_fps:
+                self._fps_frame_times.clear()
+            print(f"{'✅' if self._show_fps else '⛔'} fps: {'on' if self._show_fps else 'off'}")
+
+        # Register on both windows so the hotkeys work regardless of which
+        # one has keyboard focus.
+        self._main_window.register_key_handler('a', handle_toggle_arrows)
+        self._main_window.register_key_handler('x', handle_toggle_axes)
+        self._main_window.register_key_handler('c', handle_calibrate)
+        self._main_window.register_key_handler('Shift+c', handle_reset_calibration)
+        self._main_window.register_key_handler('f', handle_toggle_fps)
+        self._guidance_window.register_key_handler('a', handle_toggle_arrows)
+        self._guidance_window.register_key_handler('x', handle_toggle_axes)
+        self._guidance_window.register_key_handler('c', handle_calibrate)
+        self._guidance_window.register_key_handler('Shift+c', handle_reset_calibration)
+        self._guidance_window.register_key_handler('f', handle_toggle_fps)
 
     def run(self):
         """Run the main UI loop."""
@@ -200,6 +272,7 @@ class GuidanceUI:
                     qw, qx, qy, qz = imu.qw, imu.qx, imu.qy, imu.qz
                 else:
                     qw, qx, qy, qz = 1.0, 1.0, 1.0, 1.0  # Default quaternion if no IMU data
+                self._latest_imu_quat = (qw, qx, qy, qz)
 
                 # Preprocess frame
                 orig_gray_512 = cv2.cvtColor(orig_frame, cv2.COLOR_BGR2GRAY)
@@ -226,6 +299,14 @@ class GuidanceUI:
                     qw, qx, qy, qz,
                     inference_output.rotation_prediction
                 )
+
+                if self._show_fps:
+                    self._fps_frame_times.append(time.perf_counter())
+                    if len(self._fps_frame_times) >= 2:
+                        elapsed = self._fps_frame_times[-1] - self._fps_frame_times[0]
+                        if elapsed > 0:
+                            fps = (len(self._fps_frame_times) - 1) / elapsed
+                            self._draw_fps(out_frame_main_bgr, fps)
 
                 out_frame_main = cv2.cvtColor(out_frame_main_bgr, cv2.COLOR_BGR2RGB)
                 out_frame_guidance = cv2.cvtColor(out_frame_guidance_bgr, cv2.COLOR_BGR2RGB)
@@ -257,6 +338,23 @@ class GuidanceUI:
         if self._data_streamer:
             self._data_streamer.stop()
         print("🛑 Guidance UI shutdown complete.")
+
+    @staticmethod
+    def _draw_fps(frame_bgr: np.ndarray, fps: float) -> None:
+        """Draw an FPS readout in the top-right corner (in-place)."""
+        text = f"{fps:5.1f} FPS"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.6
+        thickness = 2
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+        w = frame_bgr.shape[1]
+        margin = 10
+        x = w - tw - margin
+        y = margin + th
+        cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
+                    (0, 0, 0), thickness + 1, cv2.LINE_AA)
+        cv2.putText(frame_bgr, text, (x, y), font, scale,
+                    (0, 255, 0), thickness, cv2.LINE_AA)
 
     
 

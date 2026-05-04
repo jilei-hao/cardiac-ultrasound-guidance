@@ -1315,8 +1315,13 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         color = color.copy()
         rendered_frame_bgra = cv2.cvtColor(color, cv2.COLOR_RGBA2BGRA)
 
-        # Overlay legend if available
-        if self.legend_image_bgra is not None:
+        # Overlay legend only when the predicted-axes layer is on. The
+        # legend's bottom row keys the translucent predicted-axis colors,
+        # so it has no referent once those axes are hidden — and the 'x'
+        # hotkey toggles current + predicted axes together, so dropping
+        # the legend with them keeps the widget uncluttered.
+        if (self.legend_image_bgra is not None
+                and self._layers_visible["predicted_axes"]):
             output_frame = overlay_color_legend(rendered_frame_bgra, self.legend_image_bgra, top=10, left=10, pct_width=0.5)
         else:
             output_frame = rendered_frame_bgra
