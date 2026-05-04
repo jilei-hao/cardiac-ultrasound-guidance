@@ -115,11 +115,12 @@ class GuidanceUI:
                 self._env_config["probe_mesh_path"],
                 background_color=(0, 0, 0, 1),
                 wireframe=False,
-                window_size=(640, 480),
+                window_size=(512, 512),
                 render_mode='fullscreen',
                 rotation_amplification=3.0,
                 legend_image_path=self._env_config["guidance_widget_legend_png_path"],
                 probe_units='cm',
+                reference_body_path=self._env_config.get("reference_body_path"),
             )
 
         # Initialize the data streamer
@@ -219,6 +220,14 @@ class GuidanceUI:
                 return
             renderer.reset_calibration()
 
+        # 'p' — toggle the reference patient mesh shown in the corner.
+        def handle_toggle_patient():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_layer"):
+                return
+            on = renderer.toggle_layer("reference_body")
+            print(f"{'✅' if on else '⛔'} patient mesh: {'on' if on else 'off'}")
+
         # 'f' — toggle the FPS readout drawn on the main frame.
         def handle_toggle_fps():
             self._show_fps = not self._show_fps
@@ -232,11 +241,13 @@ class GuidanceUI:
         self._main_window.register_key_handler('x', handle_toggle_axes)
         self._main_window.register_key_handler('c', handle_calibrate)
         self._main_window.register_key_handler('Shift+c', handle_reset_calibration)
+        self._main_window.register_key_handler('p', handle_toggle_patient)
         self._main_window.register_key_handler('f', handle_toggle_fps)
         self._guidance_window.register_key_handler('a', handle_toggle_arrows)
         self._guidance_window.register_key_handler('x', handle_toggle_axes)
         self._guidance_window.register_key_handler('c', handle_calibrate)
         self._guidance_window.register_key_handler('Shift+c', handle_reset_calibration)
+        self._guidance_window.register_key_handler('p', handle_toggle_patient)
         self._guidance_window.register_key_handler('f', handle_toggle_fps)
 
     def run(self):
@@ -386,6 +397,10 @@ def main():
             "probe_mesh_path": os.getenv("PROBE_MESH_PATH", "assets/transducer.stl"),
             "landmark_color_legend_png_path": os.getenv("LANDMARK_COLOR_LEGEND_PNG_PATH", "assets/4ch-legend_static_v1.png"),
             "guidance_widget_legend_png_path": os.getenv("GUIDANCE_WIDGET_LEGEND_PNG_PATH", "assets/guidance-widget-legend_v1.png"),
+            "reference_body_path": os.getenv(
+                "REFERENCE_BODY_PATH",
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "assets", "body_model.obj"),
+            ),
         },
         input_source=options.source,
         frames_folder=options.frames_folder,

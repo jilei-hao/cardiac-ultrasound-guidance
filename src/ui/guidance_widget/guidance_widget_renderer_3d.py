@@ -207,16 +207,19 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         # future ghost-probe overlay; the flag is accepted today so callers
         # can wire UI for it without a renderer change. All names not
         # listed here are rejected by ``set_layer_visible``.
-        # Default flips ``predicted_axes`` off and ``guidance_arrows`` on
-        # so a live ``predicted_rotation_matrix`` drives the rotation
-        # arrows directly — the arrows replace the ghost-axes overlay as
-        # the primary prediction display.
+        # ``current_axes`` and ``predicted_axes`` share a default so the
+        # 'x' hotkey flips both in lockstep from the very first press.
         self._layers_visible = {
             "current_axes": True,
-            "predicted_axes": False,
+            "predicted_axes": True,
             "guidance_arrows": True,
             "predicted_probe": False,
+            "reference_body": True,
         }
+        # Stored at load time so the layer toggle can swap between the
+        # original screen-corner pose and ``_HIDDEN_POSE``.
+        self._reference_body_loaded = False
+        self._reference_body_pose = np.eye(4)
         # Per-direction visibility for each arrow group. Multiple
         # rotation arrows can be lit at once when a prediction has both
         # a Y- and Z-axis component (e.g. "rotate up AND right");
@@ -711,6 +714,16 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 f"{sorted(self._layers_visible.keys())}"
             )
         self._layers_visible[name] = bool(visible)
+        # Reference body has a static pose (camera-corner anchored) and is
+        # not touched by render_widget, so apply visibility immediately by
+        # swapping its node pose. Other layers are honored each frame.
+        if (name == "reference_body"
+                and self._reference_body_loaded
+                and self.renderer is not None):
+            self.renderer.set_pose(
+                "reference_body",
+                self._reference_body_pose if visible else _HIDDEN_POSE,
+            )
 
     def is_layer_visible(self, name: str) -> bool:
         return bool(self._layers_visible.get(name, False))
@@ -1035,6 +1048,8 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             pose=pose,
             material=body_material,
         )
+        self._reference_body_pose = pose
+        self._reference_body_loaded = True
 
     def _compute_corner_pose(self, corner: str) -> np.ndarray:
         """4x4 pose that places the body reference at a screen corner.
