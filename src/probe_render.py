@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -8,6 +9,23 @@ import numpy as np
 from data_access.simulator import FrameDataSimulator
 from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from ui.image_window import create_image_window
+
+
+def _draw_fps(frame_bgr: np.ndarray, fps: float) -> None:
+    """Draw an FPS readout in the top-right corner (in-place)."""
+    text = f"{fps:5.1f} FPS"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.6
+    thickness = 2
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+    w = frame_bgr.shape[1]
+    margin = 10
+    x = w - tw - margin
+    y = margin + th
+    cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
+                (0, 0, 0), thickness + 1, cv2.LINE_AA)
+    cv2.putText(frame_bgr, text, (x, y), font, scale,
+                (0, 255, 0), thickness, cv2.LINE_AA)
 
 
 def _build_streamer(source: str, frames_folder: str, clarius_ip: str, clarius_port: int):
@@ -35,7 +53,7 @@ def main():
                         help="Folder containing frames and frame.imu.csv (required for simulator)")
     parser.add_argument("--clarius-ip", type=str, default=None, help="Clarius probe IP address")
     parser.add_argument("--clarius-port", type=int, default=5828, help="Clarius probe port")
-    parser.add_argument("--window-size", type=int, default=640, help="Window side length in pixels")
+    parser.add_argument("--window-size", type=int, default=512, help="Window side length in pixels")
     parser.add_argument("--probe-units", type=str, default="cm",
                         help="Native unit of the probe mesh: mm, cm, dm, m, in, "
                              "or a meters-per-unit float")
@@ -98,8 +116,16 @@ def main():
         renderer.destroy()
         raise RuntimeError("🛑 Failed to initialize image window")
 
-    state = {"quit": False}
+    state = {"quit": False, "show_fps": False}
     latest_imu = {"qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0}
+    frame_times: deque = deque(maxlen=30)
+
+    def toggle_fps():
+        state["show_fps"] = not state["show_fps"]
+        if not state["show_fps"]:
+            frame_times.clear()
+        print(f"{'✅' if state['show_fps'] else '⛔'} fps: "
+              f"{'on' if state['show_fps'] else 'off'}")
 
     def request_quit():
         state["quit"] = True
@@ -113,12 +139,15 @@ def main():
     window.register_key_handler("q", request_quit)
     window.register_key_handler("Escape", request_quit)
     window.register_key_handler("c", calibrate)
-    window.register_key_handler("r", reset_calibration)
+    # ``r``/``Shift+r`` are claimed below for the roll arrows; calibration
+    # reset moved to ``Shift+c`` so the calibrate/reset pair lives on one key.
+    window.register_key_handler("Shift+c", reset_calibration)
 
     # Guidance arrow + layer toggles. Arrow keys pick which translation
-    # arrow renders; Shift+arrow does the same for rotation. Pressing any
-    # arrow key auto-enables the guidance_arrows layer so the selection
-    # is visible without a separate "show" step.
+    # arrow renders; Shift+arrow does the same for rotation. ``r`` and
+    # ``Shift+r`` pick the long-axis roll arrows. Pressing any arrow key
+    # auto-enables the guidance_arrows layer so the selection is visible
+    # without a separate "show" step.
     def select_translation(direction: str):
         def handler():
             renderer.set_layer_visible("guidance_arrows", True)
@@ -133,6 +162,13 @@ def main():
             print(f"🔄 rotation arrow: {direction}")
         return handler
 
+    def select_roll(direction: str):
+        def handler():
+            renderer.set_layer_visible("guidance_arrows", True)
+            renderer.set_active_roll_arrow(direction)
+            print(f"🌀 roll arrow: {direction}")
+        return handler
+
     window.register_key_handler("Left",  select_translation("left"))
     window.register_key_handler("Right", select_translation("right"))
     window.register_key_handler("Up",    select_translation("up"))
@@ -141,6 +177,8 @@ def main():
     window.register_key_handler("Shift+Right", select_rotation("right"))
     window.register_key_handler("Shift+Up",    select_rotation("up"))
     window.register_key_handler("Shift+Down",  select_rotation("down"))
+    window.register_key_handler("r",       select_roll("ccw"))
+    window.register_key_handler("Shift+r", select_roll("cw"))
 
     def toggle_layer(name: str):
         def handler():
@@ -150,8 +188,8 @@ def main():
 
     window.register_key_handler("a", toggle_layer("guidance_arrows"))
     window.register_key_handler("p", toggle_layer("predicted_axes"))
+    window.register_key_handler("f", toggle_fps)
 
-    identity_rotation = np.eye(3)
     started = False
 
     try:
@@ -160,11 +198,12 @@ def main():
         print(
             "▶️  Probe render started.\n"
             "    Calibration: 'c' calibrate (hold probe parallel to long "
-            "axis, button up, tip superior), 'r' reset calibration.\n"
+            "axis, button up, tip superior), 'Shift+c' reset calibration.\n"
             "    Layers:      'a' toggle guidance arrows, 'p' toggle "
-            "predicted axes.\n"
+            "predicted axes, 'f' toggle FPS readout.\n"
             "    Arrows:      ←/→/↑/↓ pick translation arrow, "
-            "Shift+←/→/↑/↓ pick rotation arrow.\n"
+            "Shift+←/→/↑/↓ pick rotation arrow,\n"
+            "                 'r' / 'Shift+r' pick roll arrow (ccw / cw).\n"
             "    Quit:        'q' or Escape."
         )
 
@@ -189,7 +228,18 @@ def main():
             else:
                 qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
 
-            out_bgr = renderer.render_widget(orig_frame, qw, qx, qy, qz, identity_rotation)
+            # No predicted_rotation_matrix in this standalone tool — passing
+            # None keeps prediction-driven arrow visibility from clobbering
+            # manual Shift+arrow selections.
+            out_bgr = renderer.render_widget(orig_frame, qw, qx, qy, qz, None)
+
+            if state["show_fps"]:
+                frame_times.append(time.perf_counter())
+                if len(frame_times) >= 2:
+                    elapsed = frame_times[-1] - frame_times[0]
+                    if elapsed > 0:
+                        _draw_fps(out_bgr, (len(frame_times) - 1) / elapsed)
+
             out_rgb = cv2.cvtColor(out_bgr, cv2.COLOR_BGR2RGB)
 
             if not window.display_frame_rgb(out_rgb):
@@ -199,7 +249,7 @@ def main():
             if not window.update():
                 break
 
-            time.sleep(0.03)
+            # time.sleep(0.03)
 
     finally:
         if started:

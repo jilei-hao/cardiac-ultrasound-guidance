@@ -11,7 +11,9 @@
 # --preserve-date
 
 
+##################################
 # run probe rendering test
+##################################
 # source ./scripts/setup.sh && cusg-probe-render \
 # --source clarius --clarius-ip 192.168.50.192 --clarius-port 5828
 
@@ -22,3 +24,12 @@
 source ./scripts/setup.sh && cusg-probe-render \
 --source simulator \
 --frames-folder ./output/1777469821799232000
+
+
+##################################
+# Run cusg guidance ui
+##################################
+# source ./scripts/setup.sh && cusg-guidance-ui \
+# --source simulator \
+# --frames-folder /Users/jileihao/data/vigil/recorded_exams/tte001/01543274692500
+

@@ -51,6 +51,14 @@ _ROTATION_AXES = {
     "up":    np.array([0.0,  1.0, 0.0]),
     "down":  np.array([0.0, -1.0, 0.0]),
 }
+# Roll (long-axis) curl arrows. Convention: viewer looks from probe tail
+# toward tip (i.e. along +X in the IMU body frame). Under that view,
+# right-hand rotation about +X sweeps CCW; right-hand rotation about -X
+# sweeps CW. Map sign to label via the right-hand-rule axis.
+_ROLL_AXES = {
+    "ccw": np.array([ 1.0, 0.0, 0.0]),
+    "cw":  np.array([-1.0, 0.0, 0.0]),
+}
 
 
 class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
@@ -73,7 +81,7 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                  camera_distance_m: Optional[float] = None,
                  camera_azimuth_deg: float = 135.0,
                  camera_elevation_deg: float = 45.0,
-                 probe_origin_screen_y_from_top: float = 0.618,
+                 probe_origin_screen_y_from_top: float = 0.5,
                  probe_origin_m: tuple = (0.0, 0.0, 0.0),
                  probe_pivot_local_m: Optional[tuple] = None,
                  probe_pivot_axis: str = 'y',
@@ -199,16 +207,28 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         # future ghost-probe overlay; the flag is accepted today so callers
         # can wire UI for it without a renderer change. All names not
         # listed here are rejected by ``set_layer_visible``.
+        # Default flips ``predicted_axes`` off and ``guidance_arrows`` on
+        # so a live ``predicted_rotation_matrix`` drives the rotation
+        # arrows directly — the arrows replace the ghost-axes overlay as
+        # the primary prediction display.
         self._layers_visible = {
             "current_axes": True,
-            "predicted_axes": True,
-            "guidance_arrows": False,
+            "predicted_axes": False,
+            "guidance_arrows": True,
             "predicted_probe": False,
         }
-        # Default selections; only the active arrow in each group renders
-        # while ``guidance_arrows`` is on.
-        self._active_translation_arrow = "right"
-        self._active_rotation_arrow = "right"
+        # Per-direction visibility for each arrow group. Multiple
+        # rotation arrows can be lit at once when a prediction has both
+        # a Y- and Z-axis component (e.g. "rotate up AND right");
+        # translation stays single-active for now since translation
+        # prediction is not implemented yet.
+        self._translation_arrow_visible = {k: False for k in _TRANSLATION_DIRS}
+        self._rotation_arrow_visible = {k: False for k in _ROTATION_AXES}
+        self._roll_arrow_visible = {k: False for k in _ROLL_AXES}
+        # Minimum |Euler angle| (degrees) for a predicted rotation
+        # component to light its arrow. Below this, the prediction is
+        # treated as noise and the arrow stays hidden.
+        self.rotation_arrow_threshold_deg = 3.0
         # Set in _setup_guidance_arrows after the probe geometry is known.
         self._tail_imu = np.zeros(3, dtype=float)
 
@@ -633,6 +653,50 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 pose=_HIDDEN_POSE,
             )
 
+        # Roll arrows: 270°-arc curls orbiting the long axis at the tail.
+        # The arc plane is perpendicular to the long axis, so the ring
+        # circles around the probe handle — visualizing the twist motion
+        # the sonographer would apply to fix axial roll. ``orientation=
+        # 'flat'`` keeps the wide ribbon face co-planar with the YZ-style
+        # arc plane, so the curl reads as a flat halo around the handle
+        # rather than a tape strip standing on its edge.
+        roll_arc_radius_imu = max(tail_norm * 0.315, 1e-3)
+        roll_arc_angle_deg = 270.0
+        roll_ribbon_width_imu = self.axes_radius_m * 3.5
+        roll_thickness_imu = self.axes_radius_m * 0.7
+        roll_head_length_imu = roll_arc_radius_imu * 0.40
+        roll_head_width_imu = self.axes_radius_m * 14.0
+        # Place the arc center 1.5× the tail distance along the long
+        # axis, so the curl floats just above the probe handle (further
+        # from the tip) without crowding the directional rotation
+        # arrows. ``_tail_imu`` already points along the long axis from
+        # tip to tail in the IMU body frame. +Y is perpendicular to
+        # either ±X plane normal, so a single ``start_dir`` works for
+        # both roll directions.
+        roll_arc_center_imu = 1.3 * self._tail_imu
+        roll_start_dir = np.array([0.0, 1.0, 0.0])
+
+        for direction, axis in _ROLL_AXES.items():
+            arrow_mesh = create_curved_arrow(
+                arc_radius=roll_arc_radius_imu,
+                arc_angle_deg=roll_arc_angle_deg,
+                ribbon_width=roll_ribbon_width_imu,
+                thickness=roll_thickness_imu,
+                head_length=roll_head_length_imu,
+                head_width=roll_head_width_imu,
+                plane_normal=tuple(axis),
+                start_dir=tuple(roll_start_dir),
+                orientation='flat',
+            )
+            arrow_mesh.apply_translation(roll_arc_center_imu)
+            self.renderer.add_node(
+                f"roll_arrow_{direction}",
+                pyrender.Mesh.from_trimesh(
+                    arrow_mesh, material=self.materials['arrow_rotation']
+                ),
+                pose=_HIDDEN_POSE,
+            )
+
     def set_layer_visible(self, name: str, visible: bool) -> None:
         """Toggle a renderer layer on or off in real time.
 
@@ -659,6 +723,8 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
     def set_active_translation_arrow(self, direction: str) -> None:
         """Pick which translation guidance arrow renders.
 
+        Lights ``direction`` and clears any other translation arrow.
+
         Args:
             direction: One of ``"left"``, ``"right"``, ``"up"``, ``"down"``.
         """
@@ -667,10 +733,16 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 f"Unknown translation direction '{direction}'. Valid: "
                 f"{sorted(_TRANSLATION_DIRS.keys())}"
             )
-        self._active_translation_arrow = direction
+        for key in self._translation_arrow_visible:
+            self._translation_arrow_visible[key] = (key == direction)
 
     def set_active_rotation_arrow(self, direction: str) -> None:
         """Pick which rotation guidance arrow renders.
+
+        Lights ``direction`` and clears any other rotation arrow. Use
+        :meth:`update_rotation_arrows_from_prediction` instead when the
+        arrows should be driven by a model output rather than by manual
+        selection — that path can light multiple arrows simultaneously.
 
         Args:
             direction: One of ``"left"``, ``"right"``, ``"up"``, ``"down"``.
@@ -680,7 +752,90 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
                 f"Unknown rotation direction '{direction}'. Valid: "
                 f"{sorted(_ROTATION_AXES.keys())}"
             )
-        self._active_rotation_arrow = direction
+        for key in self._rotation_arrow_visible:
+            self._rotation_arrow_visible[key] = (key == direction)
+
+    def clear_rotation_arrows(self) -> None:
+        """Hide every rotation arrow."""
+        for key in self._rotation_arrow_visible:
+            self._rotation_arrow_visible[key] = False
+
+    def clear_translation_arrows(self) -> None:
+        """Hide every translation arrow."""
+        for key in self._translation_arrow_visible:
+            self._translation_arrow_visible[key] = False
+
+    def clear_roll_arrows(self) -> None:
+        """Hide every roll (long-axis curl) arrow."""
+        for key in self._roll_arrow_visible:
+            self._roll_arrow_visible[key] = False
+
+    def set_active_roll_arrow(self, direction: str) -> None:
+        """Pick which roll guidance arrow renders.
+
+        Lights ``direction`` and clears the other roll arrow.
+
+        Args:
+            direction: One of ``"cw"``, ``"ccw"`` (clockwise / counter-
+                clockwise as viewed from the probe tail looking toward
+                the tip — i.e. along +X in the IMU body frame).
+        """
+        if direction not in _ROLL_AXES:
+            raise ValueError(
+                f"Unknown roll direction '{direction}'. Valid: "
+                f"{sorted(_ROLL_AXES.keys())}"
+            )
+        for key in self._roll_arrow_visible:
+            self._roll_arrow_visible[key] = (key == direction)
+
+    def update_rotation_arrows_from_prediction(
+        self,
+        rotation_prediction: Optional[np.ndarray],
+        threshold_deg: Optional[float] = None,
+    ) -> None:
+        """Drive rotation + roll arrow visibility from a predicted rotation.
+
+        Decomposes the body-frame correction (the inverse of
+        ``rotation_prediction``, matching the convention used by
+        :meth:`amplify_rotation_prediction` where the target pose is
+        ``current @ inv(R_pred)``) into ``xyz`` Euler angles and lights
+        the corresponding arrow for each component whose magnitude meets
+        ``threshold_deg``. Multiple arrows can be lit simultaneously
+        (e.g. "rotate up AND right AND roll CCW").
+
+        Axis → arrow mapping:
+            rx (long-axis roll) → ``roll_arrow_visible``  ("cw"/"ccw")
+            ry                  → ``rotation_arrow_visible`` ("up"/"down")
+            rz                  → ``rotation_arrow_visible`` ("right"/"left")
+
+        Args:
+            rotation_prediction: 3x3 (or 4x4) predicted rotation matrix.
+                Pass ``None`` to clear all arrows.
+            threshold_deg: Override for ``rotation_arrow_threshold_deg``.
+        """
+        self.clear_rotation_arrows()
+        self.clear_roll_arrows()
+        if rotation_prediction is None:
+            return
+
+        thresh = (
+            self.rotation_arrow_threshold_deg
+            if threshold_deg is None else float(threshold_deg)
+        )
+
+        R_pred = (
+            rotation_prediction[:3, :3]
+            if rotation_prediction.shape == (4, 4) else rotation_prediction
+        )
+        R_correction = R_pred.T
+        rx, ry, rz = R.from_matrix(R_correction).as_euler('xyz', degrees=True)
+
+        if abs(rx) >= thresh:
+            self._roll_arrow_visible["ccw" if rx > 0 else "cw"] = True
+        if abs(ry) >= thresh:
+            self._rotation_arrow_visible["up" if ry > 0 else "down"] = True
+        if abs(rz) >= thresh:
+            self._rotation_arrow_visible["right" if rz > 0 else "left"] = True
 
     def _compute_scene_diag_m(self) -> float:
         """Return the scene AABB diagonal length in meters.
@@ -998,11 +1153,15 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
             self.renderer.set_pose(name, target)
 
     def _update_guidance_arrow_poses(self, R3: np.ndarray) -> None:
-        """Show only the active translation/rotation arrows; hide the rest.
+        """Show every visible translation/rotation arrow; hide the rest.
 
         Arrow geometry is baked in IMU body-frame coordinates (tip at
         origin, tail offset along the long axis), so the per-frame pose
-        is just ``[R3 | probe_origin_m]`` plus whichever node is active.
+        is just ``[R3 | probe_origin_m]`` for each arrow flagged
+        visible. Visibility is controlled by
+        ``_translation_arrow_visible`` / ``_rotation_arrow_visible``;
+        prediction-driven updates can light multiple rotation arrows
+        simultaneously.
         """
         layer_on = self._layers_visible["guidance_arrows"]
         active_pose = np.eye(4)
@@ -1010,16 +1169,23 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         active_pose[:3, 3] = self.probe_origin_m
 
         for direction in _TRANSLATION_DIRS.keys():
-            on = layer_on and direction == self._active_translation_arrow
+            on = layer_on and self._translation_arrow_visible[direction]
             self.renderer.set_pose(
                 f"trans_arrow_{direction}",
                 active_pose if on else _HIDDEN_POSE,
             )
 
         for direction in _ROTATION_AXES.keys():
-            on = layer_on and direction == self._active_rotation_arrow
+            on = layer_on and self._rotation_arrow_visible[direction]
             self.renderer.set_pose(
                 f"rot_arrow_{direction}",
+                active_pose if on else _HIDDEN_POSE,
+            )
+
+        for direction in _ROLL_AXES.keys():
+            on = layer_on and self._roll_arrow_visible[direction]
+            self.renderer.set_pose(
+                f"roll_arrow_{direction}",
                 active_pose if on else _HIDDEN_POSE,
             )
 
@@ -1075,12 +1241,20 @@ class GuidanceWidgetRenderer3D(GuidanceWidgetRenderer):
         
         # Convert quaternion to rotation matrix (returns 4x4)
         rotation_matrix = quaternion_to_matrix(qw, qx, qy, qz)
-        
+
         # Apply amplification to predicted rotation if provided (returns 3x3)
         amplified_predicted_rotation = None
         if predicted_rotation_matrix is not None:
             amplified_predicted_rotation = self.amplify_rotation_prediction(
                 predicted_rotation_matrix, rotation_matrix)
+            # Drive rotation arrow visibility from the (raw) prediction
+            # so the arrow set updates every frame in lockstep with the
+            # ghost axes, regardless of whether ``predicted_axes`` is
+            # toggled on. Translation arrows are not auto-updated yet —
+            # translation prediction is not implemented.
+            self.update_rotation_arrows_from_prediction(
+                predicted_rotation_matrix
+            )
         
         
         # Apply rotation to probe and current axes (needs 4x4). The probe

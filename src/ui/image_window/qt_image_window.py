@@ -349,14 +349,15 @@ class QtImageWindow(AbstractImageWindow):
         if not key_str:
             return
 
-        # Prepend "Shift+" for named keys whose text form doesn't already
-        # encode the shift state (arrows, function keys). Letter keys and
-        # printable text already arrive shifted via ``event.text()``, so
-        # leave those alone.
+        # Prepend "Shift+" when shift is held. Arrow/named keys pass
+        # through ``key_map`` and never carry shift state in their text
+        # form, so the prefix is the only signal. Letter keys also pass
+        # through ``key_map`` (always lowercased), so we need the prefix
+        # there too — without it, ``Shift+r`` would dispatch to the
+        # ``r`` handler, masking the shifted binding.
         modifiers = event.modifiers()
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            if key_str in ('Up', 'Down', 'Left', 'Right'):
-                key_str = f'Shift+{key_str}'
+            key_str = f'Shift+{key_str}'
 
         self._handle_key_event(key_str)
     
