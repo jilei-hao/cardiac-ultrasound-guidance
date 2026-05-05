@@ -245,6 +245,16 @@ class GuidanceUI:
             on = renderer.toggle_layer("reference_body")
             print(f"{'✅' if on else '⛔'} patient mesh: {'on' if on else 'off'}")
 
+        # 'b' — toggle the semi-transparent target probe ghost. Only
+        # visible when a rotation prediction is available; the toggle
+        # state is preserved across frames either way.
+        def handle_toggle_target_probe():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_layer"):
+                return
+            on = renderer.toggle_layer("target_probe")
+            print(f"{'✅' if on else '⛔'} target probe: {'on' if on else 'off'}")
+
         # 'f' — toggle the FPS readout drawn on the main frame.
         def handle_toggle_fps():
             self._show_fps = not self._show_fps
@@ -286,6 +296,12 @@ class GuidanceUI:
         handle_elevation_plus = make_nudge("nudge_camera_elevation", +camera_step_deg)
         handle_elevation_minus = make_nudge("nudge_camera_elevation", -camera_step_deg)
 
+        # '[' / ']' — zoom out / zoom in. Multiplicative so repeats stay
+        # geometric. Step matches probe_render.py.
+        camera_zoom_step = 1.1
+        handle_zoom_in = make_nudge("nudge_camera_zoom", camera_zoom_step)
+        handle_zoom_out = make_nudge("nudge_camera_zoom", 1.0 / camera_zoom_step)
+
         # ';' — reset camera to the constructor's azimuth/elevation defaults.
         def handle_reset_camera():
             renderer = self._guidance_widget_renderer
@@ -301,6 +317,7 @@ class GuidanceUI:
             window.register_key_handler('c', handle_calibrate)
             window.register_key_handler('Shift+c', handle_reset_calibration)
             window.register_key_handler('p', handle_toggle_patient)
+            window.register_key_handler('b', handle_toggle_target_probe)
             window.register_key_handler('f', handle_toggle_fps)
             window.register_key_handler('t', handle_toggle_timing)
             window.register_key_handler('d', handle_toggle_debug)
@@ -308,6 +325,8 @@ class GuidanceUI:
             window.register_key_handler('.', handle_azimuth_plus)
             window.register_key_handler("'", handle_elevation_plus)
             window.register_key_handler('/', handle_elevation_minus)
+            window.register_key_handler('[', handle_zoom_out)
+            window.register_key_handler(']', handle_zoom_in)
             window.register_key_handler(';', handle_reset_camera)
 
     def run(self):
