@@ -76,9 +76,10 @@ class GuidanceWidgetRenderer3D:
                  probe_units: Union[str, float] = 'mm',
                  probe_long_axis_length_m: Optional[float] = 0.12,
                  axes_length_m: float = 0.12,
-                 y_axis_length_m: Optional[float] = 0.20,
+                 y_axis_length_m: Optional[float] = None,
                  axes_radius_m: float = 0.003,
                  camera_distance_m: Optional[float] = None,
+                 camera_zoom: float = 0.68,
                  camera_azimuth_deg: float = 135.0,
                  camera_elevation_deg: float = 45.0,
                  probe_origin_screen_y_from_top: float = 0.5,
@@ -119,12 +120,15 @@ class GuidanceWidgetRenderer3D:
                 normalization and use the asset's native size.
             axes_length_m: Length of each coordinate-axis shaft in meters.
             y_axis_length_m: Optional override for the Y-axis shaft length
-                in meters. Defaults longer than ``axes_length_m`` so the
-                green axis sticks out past the probe body and stays
-                visible. Pass None to use ``axes_length_m`` for Y too.
+                in meters. Defaults to ``axes_length_m`` so all three
+                axes appear the same length. Set explicitly if you want
+                the green axis to stick out past the probe body.
             axes_radius_m: Shaft radius of each coordinate axis in meters.
             camera_distance_m: Camera distance from the scene origin in
                 meters. If None, auto-fitted from the scene AABB.
+            camera_zoom: Multiplicative zoom factor applied on top of the
+                camera distance. >1 moves the camera closer (zoom in);
+                <1 moves it farther (zoom out). Default 1.0.
             camera_azimuth_deg: Camera azimuth (rotation around +Y axis)
                 in degrees.
             camera_elevation_deg: Camera elevation (pitch above the XZ
@@ -175,10 +179,12 @@ class GuidanceWidgetRenderer3D:
         )
         self.axes_radius_m = axes_radius_m
         self.camera_distance_m = camera_distance_m
+        self.camera_zoom = float(camera_zoom) if camera_zoom else 1.0
         self.camera_azimuth_deg = float(camera_azimuth_deg)
         self.camera_elevation_deg = float(camera_elevation_deg)
         # Captured so ``reset_camera`` can return to the constructor pose
         # after live nudging.
+        self._default_camera_zoom = self.camera_zoom
         self._default_camera_azimuth_deg = float(camera_azimuth_deg)
         self._default_camera_elevation_deg = float(camera_elevation_deg)
         self.probe_origin_screen_y_from_top = float(probe_origin_screen_y_from_top)
@@ -240,6 +246,11 @@ class GuidanceWidgetRenderer3D:
         # snapshot that ``reset_calibration`` reverts to.
         self._body_orientation_world: Optional[np.ndarray] = None
         self._default_body_orientation_world: Optional[np.ndarray] = None
+        # World-space distance below the probe tip at which the body
+        # sits. Captured lazily on the first pose computation (when the
+        # construction camera is in place) and frozen so subsequent
+        # camera nudges / zooms leave the body planted under the tip.
+        self._body_offset_below_m: Optional[float] = None
         # Per-direction visibility for each arrow group. Multiple
         # rotation arrows can be lit at once when a prediction has both
         # a Y- and Z-axis component (e.g. "rotate up AND right");
@@ -903,10 +914,12 @@ class GuidanceWidgetRenderer3D:
         ``threshold_deg``. Multiple arrows can be lit simultaneously
         (e.g. "rotate up AND right AND roll CCW").
 
-        Axis → arrow mapping:
+        Axis → arrow mapping (matches each arrow's bend axis, i.e. the
+        axis its ribbon actually curls around — see ``_ROTATION_AXES``
+        and the ``bend_axis = cross(long_axis_imu, axis)`` setup):
             rx (long-axis roll) → ``roll_arrow_visible``  ("cw"/"ccw")
-            ry                  → ``rotation_arrow_visible`` ("up"/"down")
-            rz                  → ``rotation_arrow_visible`` ("right"/"left")
+            ry (around green Y) → ``rotation_arrow_visible`` ("right"/"left")
+            rz (around blue Z)  → ``rotation_arrow_visible`` ("down"/"up")
 
         Args:
             rotation_prediction: 3x3 (or 4x4) predicted rotation matrix.
@@ -933,14 +946,15 @@ class GuidanceWidgetRenderer3D:
         if abs(rx) >= thresh:
             self._roll_arrow_visible["ccw" if rx > 0 else "cw"] = True
         if abs(ry) >= thresh:
-            self._rotation_arrow_visible["up" if ry > 0 else "down"] = True
+            self._rotation_arrow_visible["right" if ry > 0 else "left"] = True
         if abs(rz) >= thresh:
-            self._rotation_arrow_visible["right" if rz > 0 else "left"] = True
+            self._rotation_arrow_visible["down" if rz > 0 else "up"] = True
 
         if self.debug_print:
             # trans-1/trans-2 are placeholders until translation prediction
-            # is implemented; rot-1=ry (up/down), rot-2=rz (right/left),
-            # roll=rx (long-axis twist). All in degrees.
+            # is implemented; rot-1=ry (right/left, curls around +Y),
+            # rot-2=rz (down/up, curls around +Z), roll=rx (long-axis
+            # twist). All in degrees.
             print(
                 f"[delta] rot-1={ry:+6.1f}° rot-2={rz:+6.1f}° "
                 f"trans-1=    -- trans-2=    -- roll={rx:+6.1f}°"
@@ -1024,6 +1038,8 @@ class GuidanceWidgetRenderer3D:
             distance = float(self.camera_distance_m)
         else:
             distance = max(0.35, 2.0 * self._compute_scene_diag_m())
+        zoom = self.camera_zoom if self.camera_zoom > 1e-6 else 1.0
+        distance = distance / zoom
 
         # Place the camera on a sphere of radius `distance` around the origin,
         # parameterized by azimuth (around +Y) and elevation (above XZ plane).
@@ -1136,14 +1152,31 @@ class GuidanceWidgetRenderer3D:
             f"elevation={self.camera_elevation_deg:+.1f}°"
         )
 
+    def nudge_camera_zoom(self, factor: float) -> None:
+        """Multiply the camera zoom by ``factor``.
+
+        ``factor > 1`` moves the camera closer (zoom in); ``< 1`` farther
+        (zoom out). Clamped to a sane range so a stuck-key combo can't
+        push the camera through the origin or off into infinity.
+        """
+        if factor <= 0:
+            return
+        self.camera_zoom = float(np.clip(
+            self.camera_zoom * float(factor), 0.1, 10.0
+        ))
+        self._refresh_camera()
+        print(f"🔍 camera zoom={self.camera_zoom:.2f}x")
+
     def reset_camera(self) -> None:
-        """Restore the default azimuth/elevation set at construction."""
+        """Restore the default azimuth/elevation/zoom set at construction."""
         self.camera_azimuth_deg = self._default_camera_azimuth_deg
         self.camera_elevation_deg = self._default_camera_elevation_deg
+        self.camera_zoom = self._default_camera_zoom
         self._refresh_camera()
         print(
             f"📷 camera reset (azimuth={self.camera_azimuth_deg:+.1f}° "
-            f"elevation={self.camera_elevation_deg:+.1f}°)"
+            f"elevation={self.camera_elevation_deg:+.1f}° "
+            f"zoom={self.camera_zoom:.2f}x)"
         )
 
     def _world_head_direction(self) -> np.ndarray:
@@ -1298,42 +1331,46 @@ class GuidanceWidgetRenderer3D:
         self._reference_body_loaded = True
 
     def _compute_center_bottom_pose(self) -> np.ndarray:
-        """4x4 pose that places the body reference at the screen center-bottom.
+        """4x4 pose that places the body reference directly below the probe tip.
 
-        Position is always camera-relative (the body stays anchored to the
-        screen-bottom regardless of view). Orientation is world-anchored
-        once ``calibrate`` has run — the body's axes are frozen to the
-        world directions captured at that moment, so subsequent camera
-        nudges rotate the body in step with the (also world-anchored)
-        probe. Before calibration, orientation falls back to camera-relative
-        so the legend reads consistently in screen space from launch.
-        Body-local axes for the reference asset: +Y head, +Z front (face),
-        +X body-left.
+        Position is world-anchored: a fixed offset along world -Y from
+        the probe tip (``probe_origin_m``), captured once on the first
+        pose computation and frozen so subsequent camera nudges and
+        zooms leave the body planted under the tip. The frozen offset
+        magnitude is derived from the construction-time camera framing
+        so the body sits at a sensible distance below the tip.
+        Orientation is world-anchored once ``calibrate`` has run — the
+        body's axes are frozen to the world directions captured at that
+        moment, so subsequent camera nudges rotate the body in step with
+        the (also world-anchored) probe. Before calibration, orientation
+        falls back to camera-relative so the legend reads consistently
+        in screen space from launch. Body-local axes for the reference
+        asset: +Y head, +Z front (face), +X body-left.
         """
         if self.camera_pose is None or self.camera_pos is None:
             return np.eye(4)
 
-        distance = float(np.linalg.norm(self.camera_pos))
-        half_h = distance * np.tan(self.camera_fov / 2.0)
+        # Lazy capture: convert the prior screen-bottom gap (~0.78 of the
+        # construction-view half-height) into a world-space distance and
+        # freeze. After that, camera moves don't change the offset.
+        offset_below = self._body_offset_below_m
+        if offset_below is None:
+            distance = float(np.linalg.norm(self.camera_pos))
+            half_h = distance * np.tan(self.camera_fov / 2.0)
+            offset_below = 0.78 * half_h
+            self._body_offset_below_m = offset_below
 
-        right_world = self.camera_pose[:3, 0]
-        up_world = self.camera_pose[:3, 1]
-        toward_viewer = self.camera_pose[:3, 2]
-
-        # Fraction of half-height to push the body below screen center.
-        # 0.0 = screen middle, 1.0 = bottom edge. 0.6 keeps the body's
-        # center well into the lower half while leaving a margin so its
-        # silhouette doesn't clip the bottom of the frame.
-        bottom_fraction = 0.6
-        y_from_top = self.probe_origin_screen_y_from_top
-        offset = up_world * (
-            (2.0 * y_from_top - 1.0) * half_h - bottom_fraction * half_h
+        offset = self.probe_origin_m.astype(float) + np.array(
+            [0.0, -offset_below, 0.0]
         )
 
         pose = np.eye(4)
         if self._body_orientation_world is not None:
             pose[:3, :3] = self._body_orientation_world
         else:
+            right_world = self.camera_pose[:3, 0]
+            up_world = self.camera_pose[:3, 1]
+            toward_viewer = self.camera_pose[:3, 2]
             pose[:3, 0] = toward_viewer   # body +X (body-left) → out of screen
             pose[:3, 1] = right_world     # body +Y (head)      → screen-right
             pose[:3, 2] = up_world        # body +Z (front)     → screen-up

@@ -296,6 +296,12 @@ class GuidanceUI:
         handle_elevation_plus = make_nudge("nudge_camera_elevation", +camera_step_deg)
         handle_elevation_minus = make_nudge("nudge_camera_elevation", -camera_step_deg)
 
+        # '[' / ']' — zoom out / zoom in. Multiplicative so repeats stay
+        # geometric. Step matches probe_render.py.
+        camera_zoom_step = 1.1
+        handle_zoom_in = make_nudge("nudge_camera_zoom", camera_zoom_step)
+        handle_zoom_out = make_nudge("nudge_camera_zoom", 1.0 / camera_zoom_step)
+
         # ';' — reset camera to the constructor's azimuth/elevation defaults.
         def handle_reset_camera():
             renderer = self._guidance_widget_renderer
@@ -319,6 +325,8 @@ class GuidanceUI:
             window.register_key_handler('.', handle_azimuth_plus)
             window.register_key_handler("'", handle_elevation_plus)
             window.register_key_handler('/', handle_elevation_minus)
+            window.register_key_handler('[', handle_zoom_out)
+            window.register_key_handler(']', handle_zoom_in)
             window.register_key_handler(';', handle_reset_camera)
 
     def run(self):

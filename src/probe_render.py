@@ -221,6 +221,16 @@ def main():
     window.register_key_handler(
         "/", lambda: renderer.nudge_camera_elevation(-camera_step_deg)
     )
+
+    # '[' / ']' — zoom out / zoom in. Multiplicative so repeats stay
+    # geometric.
+    camera_zoom_step = 1.1
+    window.register_key_handler(
+        "[", lambda: renderer.nudge_camera_zoom(1.0 / camera_zoom_step)
+    )
+    window.register_key_handler(
+        "]", lambda: renderer.nudge_camera_zoom(camera_zoom_step)
+    )
     window.register_key_handler(";", renderer.reset_camera)
 
     started = False
