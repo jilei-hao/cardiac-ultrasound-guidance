@@ -1,6 +1,20 @@
-from collections import deque
-from dataclasses import dataclass
 import os
+import sys
+
+# PYOPENGL_PLATFORM must be set before any pyrender import in the
+# process. Linux-only: default to NVIDIA EGL so headless / remote-desktop
+# sessions get GPU-accelerated GL instead of Mesa llvmpipe (which on
+# remote X11 forwarding software-rasterizes every fragment on the CPU
+# and inflates gl_render ~10×). macOS uses Cocoa GL via pyglet and
+# Windows uses WGL — both already hit hardware, and EGL isn't typically
+# present on either. The shell can still override on Linux — e.g.
+# PYOPENGL_PLATFORM=osmesa for hosts without NVIDIA EGL libs.
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import time
 
 import cv2
@@ -53,6 +67,23 @@ class GuidanceUI:
         # FPS readout state, toggled by the 'f' hotkey.
         self._show_fps = False
         self._fps_frame_times: deque = deque(maxlen=30)
+        # Per-stage timing breakdown, toggled by the 't' hotkey. When on,
+        # the outer loop stamps timestamps around each stage and the
+        # pipeline populates last_timings; samples are averaged and
+        # printed every TIMING_PRINT_EVERY frames.
+        self._show_timing = False
+        self._timing_samples: deque = deque(maxlen=30)
+        self._TIMING_PRINT_EVERY = 30
+        # Single-worker pool that runs run_inference concurrently with the
+        # main thread's pyrender widget render. pyrender's GL context is
+        # thread-bound, so we keep it on the main thread and ship the
+        # CUDA/CPU inference work off-thread instead.
+        self._inference_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="infer"
+        )
+        # Last frame's inference result, used to feed the widget render
+        # for the current frame while inference runs in parallel.
+        self._last_inference_output = None
     
     def initialize(self):
         """Initialize components"""
@@ -221,6 +252,16 @@ class GuidanceUI:
                 self._fps_frame_times.clear()
             print(f"{'✅' if self._show_fps else '⛔'} fps: {'on' if self._show_fps else 'off'}")
 
+        # 't' — toggle per-stage timing breakdown printed to stdout.
+        def handle_toggle_timing():
+            self._show_timing = not self._show_timing
+            self._timing_samples.clear()
+            if self._guidance_pipeline is not None:
+                self._guidance_pipeline.timing_enabled = self._show_timing
+            if self._guidance_widget_renderer is not None:
+                self._guidance_widget_renderer.timing_enabled = self._show_timing
+            print(f"{'✅' if self._show_timing else '⛔'} timing: {'on' if self._show_timing else 'off'}")
+
         # 'd' — toggle the per-frame prediction-delta debug print.
         def handle_toggle_debug():
             renderer = self._guidance_widget_renderer
@@ -261,6 +302,7 @@ class GuidanceUI:
             window.register_key_handler('Shift+c', handle_reset_calibration)
             window.register_key_handler('p', handle_toggle_patient)
             window.register_key_handler('f', handle_toggle_fps)
+            window.register_key_handler('t', handle_toggle_timing)
             window.register_key_handler('d', handle_toggle_debug)
             window.register_key_handler(',', handle_azimuth_minus)
             window.register_key_handler('.', handle_azimuth_plus)
@@ -287,8 +329,14 @@ class GuidanceUI:
                 raise RuntimeError("🛑 Error: Data streamer not initialized. Call initialize() first.")
 
             while self._main_window.is_window_active() and self._guidance_window.is_window_active():
+                # Snapshot once per iteration so toggling 't' mid-iteration
+                # can't leave half the t_X stamps as 0.0 and the other
+                # half as raw perf_counter() seconds.
+                timing_on = self._show_timing
+                t_loop_start = time.perf_counter() if timing_on else 0.0
+
                 frame_data = self._data_streamer.get_frame()
-                
+
                 if frame_data is None or frame_data.image is None:
                     continue
 
@@ -303,20 +351,49 @@ class GuidanceUI:
                     qw, qx, qy, qz = 1.0, 1.0, 1.0, 1.0  # Default quaternion if no IMU data
                 self._latest_imu_quat = (qw, qx, qy, qz)
 
+                t_capture = time.perf_counter() if timing_on else 0.0
+
                 # Preprocess frame
                 orig_gray_512 = cv2.cvtColor(orig_frame, cv2.COLOR_BGR2GRAY)
                 orig_gray_512 = cv2.resize(orig_gray_512, (512, 512))
 
-                # Run inference
-                inference_output = self._guidance_pipeline.run_inference(orig_gray_512)
+                t_preprocess = time.perf_counter() if timing_on else 0.0
 
-                # Prepare output frames
+                # Submit inference to the worker thread and render the
+                # widget concurrently on the main thread (pyrender owns a
+                # thread-bound GL context, so we can't move it). The
+                # widget consumes the previous frame's rotation prediction
+                # — the 1-frame lag is invisible because the prediction is
+                # already smoothed by PoseClassifierResultPooler upstream.
+                inference_future = self._inference_executor.submit(
+                    self._guidance_pipeline.run_inference, orig_gray_512
+                )
+
+                last_rotation = (
+                    self._last_inference_output.rotation_prediction
+                    if self._last_inference_output is not None else None
+                )
+                out_frame_guidance_bgr = self._guidance_widget_renderer.render_widget(
+                    orig_frame,
+                    qw, qx, qy, qz,
+                    last_rotation,
+                )
+
+                t_widget = time.perf_counter() if timing_on else 0.0
+
+                # Block until the current-frame inference completes.
+                inference_output = inference_future.result()
+                self._last_inference_output = inference_output
+
+                t_infer_wait = time.perf_counter() if timing_on else 0.0
+
+                # Build the main (annotated) frame.
                 out_frame_main_bgr = cv2.cvtColor(orig_gray_512, cv2.COLOR_GRAY2BGR)
                 out_frame_main_bgr = self._landmark_renderer.overlay_landmarks(
                     out_frame_main_bgr,
                     inference_output.landmarks_tensor
                 )
-            
+
                 out_frame_main_bgr = add_rgb_border_to_result(out_frame_main_bgr, inference_output.pose_classification_prediction_rgb)
 
                 if self._lvef_running:
@@ -328,12 +405,7 @@ class GuidanceUI:
                 if self._latest_lvef is not None:
                     draw_text_on_frame(out_frame_main_bgr, "LVEF: " + str(self._latest_lvef) + "%")
 
-                
-                out_frame_guidance_bgr = self._guidance_widget_renderer.render_widget(
-                    orig_frame,
-                    qw, qx, qy, qz,
-                    inference_output.rotation_prediction
-                )
+                t_overlay = time.perf_counter() if timing_on else 0.0
 
                 if self._show_fps:
                     self._fps_frame_times.append(time.perf_counter())
@@ -355,11 +427,31 @@ class GuidanceUI:
                 if not self._guidance_window.display_frame_rgb(out_frame_guidance):
                     print("❌ Failed to display guidance frame")
                     break
-                
+
                 # Update both windows
                 if not self._main_window.update() or not self._guidance_window.update():
                     print("🛑 One or both windows closed")
                     break
+
+                if timing_on:
+                    t_display = time.perf_counter()
+                    sample = {
+                        "capture":    (t_capture     - t_loop_start) * 1e3,
+                        "preprocess": (t_preprocess  - t_capture)    * 1e3,
+                        "widget":     (t_widget      - t_preprocess) * 1e3,
+                        "infer_wait": (t_infer_wait  - t_widget)     * 1e3,
+                        "overlay":    (t_overlay     - t_infer_wait) * 1e3,
+                        "display":    (t_display     - t_overlay)    * 1e3,
+                        "total":      (t_display     - t_loop_start) * 1e3,
+                    }
+                    for k, v in self._guidance_pipeline.last_timings.items():
+                        sample[f"infer.{k}"] = v
+                    for k, v in self._guidance_widget_renderer.last_timings.items():
+                        sample[f"widget.{k}"] = v
+                    self._timing_samples.append(sample)
+                    if len(self._timing_samples) >= self._TIMING_PRINT_EVERY:
+                        self._print_timing_summary()
+                        self._timing_samples.clear()
 
                 # time.sleep(0.05)
 
@@ -372,7 +464,34 @@ class GuidanceUI:
         """Shutdown the UI and release resources."""
         if self._data_streamer:
             self._data_streamer.stop()
+        if self._inference_executor is not None:
+            self._inference_executor.shutdown(wait=False, cancel_futures=True)
         print("🛑 Guidance UI shutdown complete.")
+
+    def _print_timing_summary(self) -> None:
+        samples = list(self._timing_samples)
+        if not samples:
+            return
+        keys = list(samples[0].keys())
+        avg = {k: sum(s.get(k, 0.0) for s in samples) / len(samples) for k in keys}
+        total = avg.get("total", 0.0)
+        fps = (1000.0 / total) if total > 0 else 0.0
+        outer = ["capture", "preprocess", "widget", "infer_wait", "overlay", "display"]
+        outer_str = " ".join(f"{k}={avg[k]:5.1f}" for k in outer if k in avg)
+        infer_keys = [k for k in keys if k.startswith("infer.")]
+        infer_str = " ".join(
+            f"{k.split('.', 1)[1]}={avg[k]:5.1f}" for k in infer_keys
+        )
+        widget_keys = [k for k in keys if k.startswith("widget.")]
+        widget_str = " ".join(
+            f"{k.split('.', 1)[1]}={avg[k]:5.1f}" for k in widget_keys
+        )
+        print(
+            f"[timing n={len(samples)}] total={total:5.1f}ms "
+            f"({fps:4.1f} fps) | {outer_str}"
+            + (f" | infer: {infer_str}" if infer_str else "")
+            + (f" | widget: {widget_str}" if widget_str else "")
+        )
 
     @staticmethod
     def _draw_fps(frame_bgr: np.ndarray, fps: float) -> None:

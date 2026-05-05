@@ -10,9 +10,11 @@ Provides unified interface to run:
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import time
 
 import cv2
 import numpy as np
+import torch
 from .inference_helper import get_device
 from .fourch_landmark.fourch_landmark_pipeline import (
     configure_fourch_landmark_pipeline,
@@ -63,15 +65,35 @@ class GuidancePipeline:
         self.__lvef_predictor = LVEFPredictor(device=self.__device, weight_path=config.lvef_weights)
         self.__executor = ThreadPoolExecutor(max_workers=2)
         self.__lvef_future = None
+        # Per-stage wall-clock for the last run_inference call, in ms.
+        # Populated only when timing_enabled is True.
+        self.timing_enabled = False
+        self.last_timings: dict = {}
 
+
+    def _sync_for_timing(self):
+        if self.timing_enabled and self.__device.type == "cuda":
+            torch.cuda.synchronize()
 
     def run_inference(self, frame):
+        timing_on = self.timing_enabled
+
+        if timing_on:
+            self._sync_for_timing()
+            t0 = time.perf_counter()
+
         # Run inference on the given frame using the landmark pipeline
         cla, landmarks_tensor = run_fourch_core_prediction(self.__landmark_pipeline, frame)
+        if timing_on:
+            self._sync_for_timing()
+            t1 = time.perf_counter()
 
         # Run rotation prediction
         rotation_prediction = self.__rotation_predictor.predict_rotation(frame)
-        
+        if timing_on:
+            self._sync_for_timing()
+            t2 = time.perf_counter()
+
         # Run pose classification
         pose_classification_prediction = pose_classification.run_pose_classifier(
             self.__pose_classifier_model,
@@ -82,10 +104,21 @@ class GuidancePipeline:
         )
         self.__pose_classifier_result_pooler.add_result(pose_classification_prediction)
         pose_classification_prediction = self.__pose_classifier_result_pooler.get_pooled_result()
+        if timing_on:
+            self._sync_for_timing()
+            t3 = time.perf_counter()
 
         # Add frame to LVEF predictor buffer
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_classification_prediction)
+        if timing_on:
+            t4 = time.perf_counter()
+            self.last_timings = {
+                "landmark": (t1 - t0) * 1e3,
+                "rotation": (t2 - t1) * 1e3,
+                "pose_clf": (t3 - t2) * 1e3,
+                "lvef_buf": (t4 - t3) * 1e3,
+            }
 
         return GuidancePipelineOutput(
             cla=cla,

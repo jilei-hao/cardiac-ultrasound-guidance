@@ -138,7 +138,41 @@ class Generic3DRenderer:
             
             # Create off-screen renderer
             self.renderer = pyrender.OffscreenRenderer(self.width, self.height)
-            
+
+            # One-shot diagnostic so we know whether the GL context is on
+            # the GPU (NVIDIA / AMD / Intel renderer string) or fell back
+            # to Mesa software (llvmpipe / softpipe / swrast). pyrender's
+            # OffscreenRenderer releases the context after render(); we
+            # have to re-make it current ourselves before glGetString or
+            # it returns NULL.
+            try:
+                self.renderer.render(self.scene)
+                import OpenGL.GL as _gl
+                # Re-bind via whichever private hook is available across
+                # pyrender's pyglet / EGL / OSMesa platform variants.
+                platform = getattr(self.renderer, "_platform", None)
+                made_current = False
+                if platform is not None and hasattr(platform, "make_current"):
+                    platform.make_current(); made_current = True
+                elif platform is not None and hasattr(platform, "_window"):
+                    platform._window.switch_to(); made_current = True
+                vendor = _gl.glGetString(_gl.GL_VENDOR)
+                renderer = _gl.glGetString(_gl.GL_RENDERER)
+                version = _gl.glGetString(_gl.GL_VERSION)
+                if made_current and platform is not None and hasattr(platform, "make_uncurrent"):
+                    platform.make_uncurrent()
+                vendor_s = vendor.decode() if vendor else "?"
+                renderer_s = renderer.decode() if renderer else "?"
+                version_s = version.decode() if version else "?"
+                lower = renderer_s.lower()
+                hw = (renderer_s != "?" and not any(
+                    s in lower for s in ("llvmpipe", "softpipe", "swrast", "software")
+                ))
+                tag = "🟢 HW" if hw else "🟡 SW/unknown"
+                print(f"[GL backend] {tag}  vendor={vendor_s}  renderer={renderer_s}  version={version_s}")
+            except Exception as gl_e:
+                print(f"[GL backend] probe failed: {gl_e}")
+
             self.is_initialized = True
             return True
             
