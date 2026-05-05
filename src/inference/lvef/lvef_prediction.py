@@ -92,12 +92,19 @@ class LVEFPredictor:
         x = x.permute(3, 0, 1, 2)
         x = x.unsqueeze(0)
         x = x.float().to(self.device)
-        with torch.no_grad():
-            y = self.model(x)
-        y = y.squeeze().cpu().numpy()
-        # print("LVEF: ", y.round(2))
-
-        # only preserve integer part
-        lvef = int(y)
+        try:
+            with torch.no_grad():
+                y = self.model(x)
+            lvef = int(y.squeeze().cpu().numpy())
+        finally:
+            del x
+            if 'y' in locals():
+                del y
+            # Return the inference-time activations to the driver instead
+            # of letting the caching allocator hold onto them indefinitely.
+            if self.device.type == 'cuda':
+                torch.cuda.empty_cache()
+            elif self.device.type == 'mps':
+                torch.mps.empty_cache()
 
         return lvef

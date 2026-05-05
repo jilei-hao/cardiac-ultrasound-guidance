@@ -22,25 +22,23 @@ from ui.image_window import create_dual_window_setup
 from data_access.simulator import FrameDataSimulator
 from ui.guidance_widget import GuidanceWidgetRenderer3D
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
-from common.add_clarius_lib_path import setup_clarius_environment
 import ui.image_helpers as ih
 from inference.guidance_pipeline import GuidancePipeline, GuidancePipelineConfig
 
 try:
-    clarius_available, clarius_error = setup_clarius_environment()
-    if clarius_available:
-        import data_access.clarius.clarius_streamer as ClariusStreamer
-    else:
-        print(f"Warning: Clarius not available - {clarius_error}")
-        ClariusStreamer = None
+    import data_access.clarius.clarius_streamer as ClariusStreamer
+    clarius_available = True
+    clarius_error = None
 except Exception as e:
-    print(f"Warning: Failed to setup Clarius environment - {e}")
+    print(f"Warning: Clarius not available - {e}")
     ClariusStreamer = None
+    clarius_available = False
+    clarius_error = str(e)
 
 
-def test_guidance(source, frames_folder=None, clarius_ip=None, clarius_port=None,
-                  window_size=(400, 400), background_color=(0, 0, 0, 1),
-                  scale_factor=2.0, wireframe=False):
+def run_guidance(source, frames_folder=None, clarius_ip=None, clarius_port=None,
+                 window_size=(400, 400), background_color=(0, 0, 0, 1),
+                 scale_factor=2.0, wireframe=False):
     """Run the live guidance test against the requested data source."""
     print("=== Guidance Test (3D) ===")
     print(f"Source: {source}")
@@ -302,7 +300,7 @@ Examples:
 
     try:
         bg = tuple(args.background_color) + (1,)
-        test_guidance(
+        run_guidance(
             source=args.source,
             frames_folder=args.frames_folder,
             clarius_ip=clarius_ip,

@@ -6,6 +6,8 @@ Test script for FrameDataSimulator to verify it works with existing data
 import sys
 import os
 
+import pytest
+
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -15,10 +17,14 @@ from data_access.simulator.frame_data_simulator import FrameDataSimulator
 def test_simulator():
     """Test the FrameDataSimulator with existing data"""
     print("Testing FrameDataSimulator...")
-    
-    # Use the existing data
-    frames_folder = "/Users/jileihao/dev/arpa-h-dev/cardiac-ultrasound-guidance/output/20250614-012501_155563293680"
-    imu_csv_file = "/Users/jileihao/dev/arpa-h-dev/cardiac-ultrasound-guidance/output/20250614-012501_155563293680/frame.imu.csv"
+
+    frames_folder = os.environ.get("CUSG_TEST_FRAMES_FOLDER")
+    if not frames_folder or not os.path.isdir(frames_folder):
+        pytest.skip(
+            "Set CUSG_TEST_FRAMES_FOLDER to a frames folder containing "
+            "frame.imu.csv to run this test."
+        )
+    imu_csv_file = os.path.join(frames_folder, "frame.imu.csv")
     
     print(f"Frames folder: {frames_folder}")
     print(f"IMU CSV file: {imu_csv_file}")

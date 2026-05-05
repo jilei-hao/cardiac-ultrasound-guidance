@@ -1,5 +1,11 @@
-from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly
-from AppKit import NSWorkspace
+import sys
+
+def is_macos():
+  return sys.platform == "darwin"
+
+if is_macos():
+  from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly
+  from AppKit import NSWorkspace
 
 def get_window_bbox(window_name):
   """Find window position by name on macOS"""

@@ -9,6 +9,8 @@ import os
 import time
 import numpy as np
 
+import pytest
+
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -19,6 +21,13 @@ from data_access.simulator import FrameDataSimulator
 def test_basic_window():
     """Test basic window functionality without OpenCV dependencies."""
     print("=== Basic Window Test ===")
+
+    frames_folder = os.environ.get("CUSG_TEST_FRAMES_FOLDER")
+    if not frames_folder or not os.path.isdir(frames_folder):
+        pytest.skip(
+            "Set CUSG_TEST_FRAMES_FOLDER to a frames folder to run this "
+            "interactive demo."
+        )
     
     # Create window
     window = create_image_window(
@@ -45,9 +54,7 @@ def test_basic_window():
     print("Window info:", window.get_display_info())
     
     # Create simulator
-    simulator = FrameDataSimulator(
-        frames_folder="/Users/jileihao/dev/arpa-h-dev/cardiac-ultrasound-guidance/output/20250614-012501_155563293680"
-    )
+    simulator = FrameDataSimulator(frames_folder=frames_folder)
     
     try:
         simulator.start()

@@ -146,11 +146,14 @@ class GuidanceUI:
         # LVEF computation
         def handle_lvef():
             print("LVEF key pressed!")
-            if not self._lvef_running:
-                self._lvef_running = True
-                self._guidance_pipeline.run_lvef_async()
-            else:
+            if self._lvef_running:
                 print("LVEF computation is already running.")
+                return
+            if self._guidance_pipeline.run_lvef_async():
+                self._latest_lvef = None
+                self._lvef_running = True
+            else:
+                print("LVEF computation not started: buffer not ready.")
 
         self._main_window.register_key_handler('e', handle_lvef)
 
@@ -315,8 +318,14 @@ class GuidanceUI:
                 )
             
                 out_frame_main_bgr = add_rgb_border_to_result(out_frame_main_bgr, inference_output.pose_classification_prediction_rgb)
+
+                if self._lvef_running:
+                    result = self._guidance_pipeline.get_latest_lvef()
+                    if result is not None:
+                        self._latest_lvef = result
+                        self._lvef_running = False
+
                 if self._latest_lvef is not None:
-                    self._lvef_running = False  # Reset running flag when result is ready
                     draw_text_on_frame(out_frame_main_bgr, "LVEF: " + str(self._latest_lvef) + "%")
 
                 
@@ -352,7 +361,7 @@ class GuidanceUI:
                     print("🛑 One or both windows closed")
                     break
 
-                time.sleep(0.05)
+                # time.sleep(0.05)
 
         except Exception as e:
             print(f"🛑 [GuidanceUI] main loop exception: {e}")
