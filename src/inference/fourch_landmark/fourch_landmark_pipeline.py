@@ -21,11 +21,12 @@ sys.path.append(current_dir)
 from echo_dataset import LABEL_VALUES
 from convnext_fpn import ConvNeXtFPN
 from qc_seg2landmarks import (
-    process_sequence, 
-    intersect_labels, 
-    biggest_contour, 
+    process_sequence,
+    intersect_labels,
+    biggest_contour,
     sample_equally_spaced_points,
     landmark_uncertainty,
+    landmark_uncertainty_batch,
     compute_uncertainty_maps,
     adjust_color_by_uncertainty,
     color_for_label
@@ -86,7 +87,14 @@ class FourChamberLandmarkPipeline:
             print(f"Non-strict load: missing={len(missing)} unexpected={len(unexpected)}")
         
         self.model = self.model.to(self.device).eval()
-        
+
+        # On CUDA, run the forward under AMP autocast: weights stay in
+        # fp32, but per-op precision is auto-picked (fp16 for convs,
+        # fp32 for ops that need range like LayerNorm/softmax). Avoids
+        # the saturation pure-half hit ConvNeXt with on this checkpoint
+        # (logits → NaN → argmax all-background → empty masks).
+        self._amp = torch.device(self.device).type == "cuda"
+
         # Initialize frame buffer for temporal consistency
         self.frame_buffer = []
         self.buffer_size = 3  # Use 3 frames for temporal consistency
@@ -134,9 +142,9 @@ class FourChamberLandmarkPipeline:
         std = np.array([0.229, 0.224, 0.225])
         rgb_frame = (rgb_frame - mean) / std
         
-        # Convert to tensor and add batch dimension
+        # Convert to tensor and add batch dimension. Stay in fp32 here;
+        # autocast in run_prediction picks per-op precision at forward time.
         tensor = torch.from_numpy(rgb_frame).permute(2, 0, 1).unsqueeze(0).float()
-        
         return tensor.to(self.device)
     
     def _postprocess_segmentation(self, logits: torch.Tensor, original_size: Tuple[int, int]) -> np.ndarray:
@@ -167,53 +175,57 @@ class FourChamberLandmarkPipeline:
     def _extract_landmarks_from_mask(self, mask: np.ndarray, frame: np.ndarray) -> List[Dict]:
         """
         Extract landmarks from segmentation mask.
-        
+
         Args:
             mask: Segmentation mask with label values
             frame: Original grayscale frame
-            
+
         Returns:
             List of landmark dictionaries
         """
-        landmarks = []
-        
         # Compute uncertainty maps
         edges, dist_map, gradmag_norm = compute_uncertainty_maps(frame)
-        
+
+        # Phase 1: per-label contour sampling. Collect every (x, y, label)
+        # the per-chamber sampler produced before computing uncertainty so
+        # the disk-mean gather can run once over all points.
+        all_xs: List[int] = []
+        all_ys: List[int] = []
+        all_labels: List[int] = []
         for label in self.labels:
-            # Create binary mask for this label
             binary_mask = (mask == label).astype(np.uint8)
-            
             if binary_mask.sum() == 0:
                 continue
-                
-            # Find largest contour
             contour = biggest_contour(binary_mask, min_area=self.min_area)
             if contour is None:
                 continue
-                
-            # Sample equally spaced points based on landmarks_per_chamber configuration
             n_points = self.landmarks_per_chamber.get(label, self.n_landmarks)
             pts = sample_equally_spaced_points(contour, n_points)
             if not pts:
                 continue
-                
-            # Extract landmarks with uncertainty
             for x, y in pts:
-                uncertainty, _, _, _ = landmark_uncertainty(
-                    x, y, dist_map, gradmag_norm,
-                    grad_radius=self.grad_radius, d0=self.d0, 
-                    w_dist=self.w_dist, w_grad=self.w_grad
-                )
-                
-                landmarks.append({
-                    'x': x,
-                    'y': y,
-                    'label': label,
-                    'uncertainty': uncertainty
-                })
-        
-        return landmarks
+                all_xs.append(x)
+                all_ys.append(y)
+                all_labels.append(label)
+
+        if not all_xs:
+            return []
+
+        # Phase 2: vectorized uncertainty for all points in one pass —
+        # collapses ~60 Python/numpy dispatches into a single gather + mean.
+        xs_arr = np.asarray(all_xs, dtype=np.int64)
+        ys_arr = np.asarray(all_ys, dtype=np.int64)
+        uncertainties = landmark_uncertainty_batch(
+            xs_arr, ys_arr, dist_map, gradmag_norm,
+            grad_radius=self.grad_radius, d0=self.d0,
+            w_dist=self.w_dist, w_grad=self.w_grad,
+        )
+
+        return [
+            {'x': int(x), 'y': int(y), 'label': int(label),
+             'uncertainty': float(u)}
+            for x, y, label, u in zip(all_xs, all_ys, all_labels, uncertainties)
+        ]
     
     def _landmarks_to_tensor(self, landmarks: List[Dict], frame_size: Tuple[int, int]) -> torch.Tensor:
         """
@@ -302,7 +314,11 @@ class FourChamberLandmarkPipeline:
         
         # Run segmentation
         with torch.no_grad():
-            logits = self.model(input_tensor)
+            if self._amp:
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    logits = self.model(input_tensor)
+            else:
+                logits = self.model(input_tensor)
         
         # Postprocess segmentation
         mask = self._postprocess_segmentation(logits, original_size)

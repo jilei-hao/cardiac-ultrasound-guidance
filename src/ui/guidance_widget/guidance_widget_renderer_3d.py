@@ -261,6 +261,11 @@ class GuidanceWidgetRenderer3D:
 
         self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
+        # Per-stage wall-clock for the last render_widget call, in ms.
+        # Populated only when timing_enabled is True.
+        self.timing_enabled = False
+        self.last_timings: dict = {}
+
         self._initialize_renderer()
     
     def _initialize_renderer(self):
@@ -1422,7 +1427,11 @@ class GuidanceWidgetRenderer3D:
         """
         if self.renderer is None:
             raise RuntimeError("Renderer not initialized")
-        
+
+        timing_on = self.timing_enabled
+        if timing_on:
+            t0 = time.perf_counter()
+
         # Convert quaternion to rotation matrix (returns 4x4)
         rotation_matrix = quaternion_to_matrix(qw, qx, qy, qz)
 
@@ -1443,8 +1452,10 @@ class GuidanceWidgetRenderer3D:
             # green when the current axes already match the predicted axes,
             # ramping toward orange as the geodesic angle grows.
             self._update_arrow_alignment_color(predicted_rotation_matrix)
-        
-        
+
+        if timing_on:
+            t_pred = time.perf_counter()
+
         # Apply rotation to probe and current axes (needs 4x4). The probe
         # is pivoted around ``probe_pivot_local_m`` (the tip, in mesh-local
         # coords) so the tip stays planted at ``probe_origin_m`` while the
@@ -1491,13 +1502,22 @@ class GuidanceWidgetRenderer3D:
                 ("predicted_x_axis", "predicted_y_axis", "predicted_z_axis"),
                 _HIDDEN_POSE, visible=False,
             )
-        
-        # Render the scene
+
+        if timing_on:
+            t_pose = time.perf_counter()
+
+        # Render the scene. pyrender.OffscreenRenderer.render() does the
+        # GL submission AND a blocking glReadPixels back to CPU, so by the
+        # time it returns the GPU is fully synced — the timestamp below
+        # captures rasterization + readback together.
         if self.wireframe:
             import pyrender
             color, _ = self.renderer.render(flags=pyrender.RenderFlags.ALL_WIREFRAME)
         else:
             color, _ = self.renderer.render()
+
+        if timing_on:
+            t_gl = time.perf_counter()
 
         # make a copy of the color
         color = color.copy()
@@ -1516,9 +1536,20 @@ class GuidanceWidgetRenderer3D:
 
         # Handle different render modes
         if self.render_mode == 'overlay' and input_frame_bgr is not None:
-            return self._overlay_on_frame(output_frame, input_frame_bgr)
+            result = self._overlay_on_frame(output_frame, input_frame_bgr)
         else:
-            return output_frame
+            result = output_frame
+
+        if timing_on:
+            t_post = time.perf_counter()
+            self.last_timings = {
+                "pred_update": (t_pred - t0)    * 1e3,
+                "pose_update": (t_pose - t_pred) * 1e3,
+                "gl_render":   (t_gl   - t_pose) * 1e3,
+                "output_post": (t_post - t_gl)   * 1e3,
+            }
+
+        return result
     
     def _overlay_on_frame(self, widget_frame: np.ndarray, input_frame: np.ndarray) -> np.ndarray:
         """Overlay the 3D widget on an input frame."""
