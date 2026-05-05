@@ -166,3 +166,6 @@ weights/*/*.bin
 
 # dotenv environment variables file
 .env
+
+/run.sh
+/run.bat

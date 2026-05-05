@@ -245,6 +245,16 @@ class GuidanceUI:
             on = renderer.toggle_layer("reference_body")
             print(f"{'✅' if on else '⛔'} patient mesh: {'on' if on else 'off'}")
 
+        # 'b' — toggle the semi-transparent target probe ghost. Only
+        # visible when a rotation prediction is available; the toggle
+        # state is preserved across frames either way.
+        def handle_toggle_target_probe():
+            renderer = self._guidance_widget_renderer
+            if renderer is None or not hasattr(renderer, "toggle_layer"):
+                return
+            on = renderer.toggle_layer("target_probe")
+            print(f"{'✅' if on else '⛔'} target probe: {'on' if on else 'off'}")
+
         # 'f' — toggle the FPS readout drawn on the main frame.
         def handle_toggle_fps():
             self._show_fps = not self._show_fps
@@ -301,6 +311,7 @@ class GuidanceUI:
             window.register_key_handler('c', handle_calibrate)
             window.register_key_handler('Shift+c', handle_reset_calibration)
             window.register_key_handler('p', handle_toggle_patient)
+            window.register_key_handler('b', handle_toggle_target_probe)
             window.register_key_handler('f', handle_toggle_fps)
             window.register_key_handler('t', handle_toggle_timing)
             window.register_key_handler('d', handle_toggle_debug)

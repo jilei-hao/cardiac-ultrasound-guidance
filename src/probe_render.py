@@ -57,6 +57,12 @@ def main():
     parser.add_argument("--probe-units", type=str, default="cm",
                         help="Native unit of the probe mesh: mm, cm, dm, m, in, "
                              "or a meters-per-unit float")
+    parser.add_argument("--probe-long-axis-m", type=float, default=0.12,
+                        help="Target probe long-axis length in meters. The "
+                             "probe mesh is uniformly scaled to this size so "
+                             "widget geometry stays consistent across mesh "
+                             "swaps. Pass a negative value to disable "
+                             "normalization and use the asset's native size.")
     parser.add_argument("--camera-distance-m", type=float, default=None,
                         help="Camera distance from scene origin in meters. "
                              "If omitted, auto-fits to the scene AABB.")
@@ -93,6 +99,9 @@ def main():
         {"camera_elevation_deg": args.camera_elevation_deg}
         if args.camera_elevation_deg is not None else {}
     )
+    probe_long_axis_m = (
+        args.probe_long_axis_m if args.probe_long_axis_m > 0 else None
+    )
     renderer = GuidanceWidgetRenderer3D(
         probe_mesh_path,
         background_color=(0, 0, 0, 1),
@@ -102,6 +111,7 @@ def main():
         rotation_amplification=args.rotation_amplification,
         legend_image_path=legend_png_path,
         probe_units=probe_units,
+        probe_long_axis_length_m=probe_long_axis_m,
         camera_distance_m=args.camera_distance_m,
         reference_body_path=reference_body_path,
         **elevation_kwarg,
@@ -188,6 +198,7 @@ def main():
 
     window.register_key_handler("a", toggle_layer("guidance_arrows"))
     window.register_key_handler("p", toggle_layer("predicted_axes"))
+    window.register_key_handler("b", toggle_layer("target_probe"))
     window.register_key_handler("f", toggle_fps)
 
     def toggle_debug():
@@ -222,7 +233,8 @@ def main():
             "    Calibration: 'c' calibrate (hold probe parallel to long "
             "axis, button up, tip superior), 'Shift+c' reset calibration.\n"
             "    Layers:      'a' toggle guidance arrows, 'p' toggle "
-            "predicted axes, 'f' toggle FPS readout.\n"
+            "predicted axes, 'b' toggle target probe, "
+            "'f' toggle FPS readout.\n"
             "    Arrows:      ←/→/↑/↓ pick translation arrow, "
             "Shift+←/→/↑/↓ pick rotation arrow,\n"
             "                 'r' / 'Shift+r' pick roll arrow (ccw / cw).\n"

@@ -74,6 +74,7 @@ class GuidanceWidgetRenderer3D:
                  rotation_amplification=3.0,
                  legend_image_path: str = "",
                  probe_units: Union[str, float] = 'mm',
+                 probe_long_axis_length_m: Optional[float] = 0.12,
                  axes_length_m: float = 0.12,
                  y_axis_length_m: Optional[float] = 0.20,
                  axes_radius_m: float = 0.003,
@@ -110,6 +111,12 @@ class GuidanceWidgetRenderer3D:
             legend_image_path: Optional path to a legend image overlay.
             probe_units: Native unit of the probe mesh ('mm', 'cm', 'dm',
                 'm', 'in', or a meters-per-unit float). Default 'mm'.
+            probe_long_axis_length_m: Target extent (in meters) along
+                ``probe_pivot_axis`` after units conversion. The probe
+                sub-meshes are uniformly scaled to match this length, so
+                widget geometry (axes, arrows, camera fit) stays
+                identical across mesh swaps. Pass None to skip
+                normalization and use the asset's native size.
             axes_length_m: Length of each coordinate-axis shaft in meters.
             y_axis_length_m: Optional override for the Y-axis shaft length
                 in meters. Defaults longer than ``axes_length_m`` so the
@@ -157,6 +164,10 @@ class GuidanceWidgetRenderer3D:
         self.legend_image_path = legend_image_path
 
         self.probe_units = probe_units
+        self.probe_long_axis_length_m = (
+            float(probe_long_axis_length_m)
+            if probe_long_axis_length_m is not None else None
+        )
         self.axes_length_m = axes_length_m
         self.y_axis_length_m = (
             float(y_axis_length_m)
@@ -201,17 +212,18 @@ class GuidanceWidgetRenderer3D:
         # delta summary. Toggled at runtime via the 'd' hotkey.
         self.debug_print = bool(debug_print)
 
-        # Toggleable scene layers. ``predicted_probe`` is reserved for a
-        # future ghost-probe overlay; the flag is accepted today so callers
-        # can wire UI for it without a renderer change. All names not
-        # listed here are rejected by ``set_layer_visible``.
-        # ``current_axes`` and ``predicted_axes`` share a default so the
-        # 'x' hotkey flips both in lockstep from the very first press.
+        # Toggleable scene layers. ``target_probe`` overlays a
+        # semi-transparent ghost probe at the predicted axes; off by
+        # default since the ghost is busy and most useful when actively
+        # correcting alignment. All names not listed here are rejected by
+        # ``set_layer_visible``. ``current_axes`` and ``predicted_axes``
+        # share a default so the 'x' hotkey flips both in lockstep from
+        # the very first press.
         self._layers_visible = {
             "current_axes": True,
             "predicted_axes": True,
             "guidance_arrows": True,
-            "predicted_probe": False,
+            "target_probe": False,
             "reference_body": True,
         }
         # Stored at load time so the layer toggle can swap between the
@@ -348,6 +360,33 @@ class GuidanceWidgetRenderer3D:
                 m.vertices = m.vertices - center
                 if meters_per_unit != 1.0:
                     m.apply_scale(meters_per_unit)
+
+            # Normalize the probe to a canonical long-axis length so the
+            # widget geometry (axes lengths, arrow arc radii, camera
+            # auto-fit) stays identical when swapping probe meshes.
+            # Without this, ``tail_norm`` and ``probe_extent`` shift with
+            # every asset, propagating into arrow sizes and the camera
+            # distance.
+            if self.probe_long_axis_length_m is not None:
+                axis_idx = {'x': 0, 'y': 1, 'z': 2}[self.probe_pivot_axis]
+                all_v = np.concatenate(
+                    [np.asarray(m.vertices, dtype=float) for m in sub_meshes],
+                    axis=0,
+                )
+                current_long = float(
+                    all_v[:, axis_idx].max() - all_v[:, axis_idx].min()
+                )
+                if current_long > 1e-9:
+                    norm_scale = self.probe_long_axis_length_m / current_long
+                    if abs(norm_scale - 1.0) > 1e-6:
+                        for m in sub_meshes:
+                            m.apply_scale(norm_scale)
+                        print(
+                            f"📏 Normalized probe long-axis "
+                            f"({self.probe_pivot_axis}) to "
+                            f"{self.probe_long_axis_length_m:.3f} m "
+                            f"(scale ×{norm_scale:.4f})"
+                        )
 
             self.probe_node_specs = [
                 (f"probe.{i}", m, pyrender.Mesh.from_trimesh(m))
@@ -523,6 +562,16 @@ class GuidanceWidgetRenderer3D:
                 metallicFactor=0.25,
                 roughnessFactor=0.35,
             ),
+            # Single semi-transparent material for the ghost target probe.
+            # Per-submesh .mtl colors are intentionally dropped — a uniform
+            # tint reads more clearly as "ghost / target" than a partly
+            # see-through replica of the real probe.
+            'target_probe': pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.6, 0.85, 1.0, 0.35],
+                metallicFactor=0.1,
+                roughnessFactor=0.6,
+                alphaMode='BLEND',
+            ),
         }
     
     def _setup_scene(self):
@@ -542,10 +591,28 @@ class GuidanceWidgetRenderer3D:
             else:
                 self.renderer.add_node(name, pr_mesh)
 
+        # Ghost target probe: same geometry as the live probe, but with a
+        # uniform semi-transparent material so it reads as a "where you
+        # should be" overlay. Hidden until ``target_probe`` is toggled on
+        # and a predicted rotation is available. Names mirror probe
+        # submeshes with a ``target_`` prefix so we can iterate them in
+        # lockstep.
+        self.target_probe_node_names: list = []
+        for name, sub_tri, _pr_mesh in self.probe_node_specs:
+            target_name = f"target_{name}"
+            self.renderer.add_node(
+                target_name,
+                pyrender.Mesh.from_trimesh(
+                    sub_tri, material=self.materials['target_probe']
+                ),
+                pose=_HIDDEN_POSE,
+            )
+            self.target_probe_node_names.append(target_name)
+
         self.renderer.add_node("x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x']))
         self.renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y']))
         self.renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z']))
-        
+
         # Add predicted axes (semi-transparent)
         self.renderer.add_node("predicted_x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x_predicted']))
         self.renderer.add_node("predicted_y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y_predicted']))
@@ -718,7 +785,8 @@ class GuidanceWidgetRenderer3D:
 
         Args:
             name: One of ``"current_axes"``, ``"predicted_axes"``,
-                ``"guidance_arrows"``, ``"predicted_probe"``.
+                ``"guidance_arrows"``, ``"target_probe"``,
+                ``"reference_body"``.
             visible: True to show, False to hide on the next frame.
         """
         if name not in self._layers_visible:
@@ -1502,6 +1570,27 @@ class GuidanceWidgetRenderer3D:
                 ("predicted_x_axis", "predicted_y_axis", "predicted_z_axis"),
                 _HIDDEN_POSE, visible=False,
             )
+
+        # Target probe: same pivot/origin as the live probe, but rotated
+        # to the (amplified) predicted pose so it shows the operator
+        # "where the probe should be". Hidden when the layer is off or
+        # when there's no prediction this frame.
+        target_layer_on = self._layers_visible["target_probe"]
+        if target_layer_on and amplified_predicted_rotation is not None:
+            R_target = (
+                self.calibration_matrix @ amplified_predicted_rotation
+                @ self.probe_axis_fix_matrix
+            )
+            target_probe_pose = np.eye(4)
+            target_probe_pose[:3, :3] = R_target
+            target_probe_pose[:3, 3] = (
+                self.probe_origin_m - R_target @ self.probe_pivot_local_m
+            )
+            for name in self.target_probe_node_names:
+                self.renderer.set_pose(name, target_probe_pose)
+        else:
+            for name in self.target_probe_node_names:
+                self.renderer.set_pose(name, _HIDDEN_POSE)
 
         if timing_on:
             t_pose = time.perf_counter()
