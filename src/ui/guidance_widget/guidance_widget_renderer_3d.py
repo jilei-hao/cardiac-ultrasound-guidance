@@ -201,6 +201,13 @@ class GuidanceWidgetRenderer3D:
             self.probe_axis_fix_matrix = R.from_euler(
                 'xyz', probe_axis_fix_euler_deg, degrees=True
             ).as_matrix()
+        # Flip the rendered model 180° around the IMU long axis (+X) so the
+        # probe button faces upward in the canonical calibration pose. Applied
+        # only to the probe — current/predicted axes still use R3 alone.
+        self.probe_axis_fix_matrix = (
+            R.from_euler('x', 180, degrees=True).as_matrix()
+            @ self.probe_axis_fix_matrix
+        )
 
         self.reference_body_path = reference_body_path
         self.reference_body_units = reference_body_units
