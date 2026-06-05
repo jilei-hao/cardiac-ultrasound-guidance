@@ -316,7 +316,7 @@ def run_event_loop(options, config):
       # push the classifier result to the queue
       classifier_queue.put(crnt_classifier_result)
       # only run the following code if the queue is at least 5 elemenets long
-      sliding_window_size = 15
+      sliding_window_size = 3
       if classifier_queue.qsize() > sliding_window_size:
         # pop the oldest result from the queue
         classifier_queue.get()

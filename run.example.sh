@@ -31,5 +31,4 @@
 ##################################
 source ./scripts/setup.sh && cusg-guidance-ui \
 --source simulator \
---frames-folder /data/jilei/vigil-data/lvef-example/tte002_clarius/00368617585550
-
+--frames-folder /Users/aarongzy/Downloads/emily_lumify_scans_512x512_frames/image_29966697246431_deid_fr1-80_LoopNum-28.dcm
