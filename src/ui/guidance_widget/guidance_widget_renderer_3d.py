@@ -270,6 +270,27 @@ class GuidanceWidgetRenderer3D:
         # component to light its arrow. Below this, the prediction is
         # treated as noise and the arrow stays hidden.
         self.rotation_arrow_threshold_deg = 1.0
+        # --- Translation guidance (USGR probe-pose T_rel) tunables ---
+        # Minimum |translation component| (metres, after amplification) for a
+        # translation arrow to light. Below this the component is noise.
+        self.translation_arrow_threshold_m = 0.005
+        # Visual gain applied to the predicted translation before thresholding
+        # / lighting arrows (analogous to ``rotation_amplification``).
+        self.translation_amplification = 1.0
+        # Maps the USGR probe-frame translation axes onto this renderer's IMU
+        # body-frame axes (see ``_TRANSLATION_DIRS``). Identity is the starting
+        # point; sign/permutation must be calibrated empirically on real frames
+        # so "move right/up" arrows point the physically correct way.
+        self.usgr_to_body = np.eye(3, dtype=float)
+        # Gain applied to the body-frame translation when spatially offsetting
+        # the predicted axes + target-probe ghost away from the current pose so
+        # the operator sees WHERE to move (not just how to rotate). Raise it to
+        # exaggerate small (cm-scale) displacements for visibility, like
+        # ``rotation_amplification`` does for rotation.
+        self.guidance_translation_amplification = 1.0
+        # Last calibrated current-orientation R3 (set each render); used to map
+        # the body-frame target translation into render-world.
+        self._last_R3 = np.eye(3, dtype=float)
         # Set in _setup_guidance_arrows after the probe geometry is known.
         self._tail_imu = np.zeros(3, dtype=float)
 
@@ -967,6 +988,58 @@ class GuidanceWidgetRenderer3D:
                 f"trans-1=    -- trans-2=    -- roll={rx:+6.1f}°"
             )
 
+    def translation_prediction_to_body(self, translation_prediction: np.ndarray) -> np.ndarray:
+        """Map a USGR-frame T_rel (metres) into this renderer's IMU body frame.
+
+        Applies the ``usgr_to_body`` axis sign/permutation then the visual
+        ``translation_amplification`` gain. Returns a length-3 array
+        ``[t_x, t_y, t_z]`` in body-frame metres.
+        """
+        t = np.asarray(translation_prediction, dtype=float).reshape(3)
+        return (self.usgr_to_body @ t) * self.translation_amplification
+
+    def update_translation_arrows_from_prediction(
+        self,
+        translation_prediction: Optional[np.ndarray],
+        threshold_m: Optional[float] = None,
+    ) -> None:
+        """Drive translation arrow visibility from a predicted T_rel.
+
+        ``translation_prediction`` is the body-centric translation (metres,
+        USGR probe frame) from the current pose to the target standard view.
+        It is mapped into the renderer body frame (:meth:`translation_prediction_to_body`)
+        and decomposed onto the perpendicular-plane axes used by the
+        translation arrows (``_TRANSLATION_DIRS``): the Y component lights
+        ``right``/``left`` and the Z component lights ``up``/``down``. Both can
+        light at once (e.g. "move right AND up"). The long-axis (X / in-out)
+        component has no dedicated arrow and is ignored here.
+
+        Args:
+            translation_prediction: length-3 translation, or ``None`` to clear.
+            threshold_m: override for ``translation_arrow_threshold_m``.
+        """
+        self.clear_translation_arrows()
+        if translation_prediction is None:
+            return
+
+        thresh = (
+            self.translation_arrow_threshold_m
+            if threshold_m is None else float(threshold_m)
+        )
+        t_body = self.translation_prediction_to_body(translation_prediction)
+        ty, tz = float(t_body[1]), float(t_body[2])
+
+        if abs(ty) >= thresh:
+            self._translation_arrow_visible["right" if ty > 0 else "left"] = True
+        if abs(tz) >= thresh:
+            self._translation_arrow_visible["up" if tz > 0 else "down"] = True
+
+        if self.debug_print:
+            print(
+                f"[delta] trans-y={ty:+.4f}m trans-z={tz:+.4f}m "
+                f"(thresh={thresh:.4f}m)"
+            )
+
     def _alignment_color(self, angle_rad: float) -> list:
         """Map a geodesic rotation angle to an RGBA arrow color.
 
@@ -1525,15 +1598,20 @@ class GuidanceWidgetRenderer3D:
     
     def render_widget(self, input_frame_bgr: Optional[np.ndarray] = None,
                      qw: float = 1.0, qx: float = 0.0, qy: float = 0.0, qz: float = 0.0,
-                     predicted_rotation_matrix: Optional[np.ndarray] = None) -> np.ndarray:
+                     predicted_rotation_matrix: Optional[np.ndarray] = None,
+                     predicted_translation: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Render the 3D guidance widget.
-        
+
         Args:
             input_frame_bgr: Input frame (ignored for fullscreen mode)
             qw, qx, qy, qz: Quaternion components for probe orientation
             predicted_rotation_matrix: Optional 3x3 predicted rotation correction matrix (raw prediction)
-            
+            predicted_translation: Optional length-3 body-centric translation (metres,
+                USGR probe frame) to the target standard view. Drives the translation
+                guidance arrows (and offsets the target-probe ghost). Pass ``None`` to
+                clear translation guidance.
+
         Returns:
             np.ndarray: Rendered frame with 3D guidance widget
         """
@@ -1565,6 +1643,13 @@ class GuidanceWidgetRenderer3D:
             # ramping toward orange as the geodesic angle grows.
             self._update_arrow_alignment_color(predicted_rotation_matrix)
 
+        # Drive translation arrows from the predicted T_rel, when provided.
+        # Mirrors the rotation convention: ``None`` means "don't touch" (so
+        # manual set_active_translation_arrow callers like probe_render.py keep
+        # control); a vector re-derives which arrows light this frame.
+        if predicted_translation is not None:
+            self.update_translation_arrows_from_prediction(predicted_translation)
+
         if timing_on:
             t_pred = time.perf_counter()
 
@@ -1581,6 +1666,9 @@ class GuidanceWidgetRenderer3D:
             # rotations follow the probe's body axes; identity until the
             # operator calls ``calibrate()``.
             R3 = self.calibration_matrix @ rotation_matrix[:3, :3]
+            # Cache for the target-probe ghost translation offset (maps the
+            # body-frame T_rel into the current render-world frame).
+            self._last_R3 = R3
             R_probe = R3 @ self.probe_axis_fix_matrix
             probe_pose = np.eye(4)
             probe_pose[:3, :3] = R_probe
@@ -1597,14 +1685,31 @@ class GuidanceWidgetRenderer3D:
 
             self._update_guidance_arrow_poses(R3)
 
+        # Render-world displacement to the target view, shared by the predicted
+        # axes and the ghost so both sit at the SAME target location. The
+        # body-frame T_rel is mapped into render-world via the current
+        # orientation (_last_R3). Zero when no translation is predicted this
+        # frame. Frame/scale (usgr_to_body, guidance_translation_amplification)
+        # need empirical calibration.
+        target_translation_offset = np.zeros(3)
+        if predicted_translation is not None:
+            t_body = (
+                self.usgr_to_body
+                @ np.asarray(predicted_translation, dtype=float).reshape(3)
+            ) * self.guidance_translation_amplification
+            target_translation_offset = self._last_R3 @ t_body
+
         # Predicted axes follow the prediction when one is available AND
-        # the layer is on; otherwise they're hidden off-screen.
+        # the layer is on; otherwise they're hidden off-screen. They originate
+        # from the current-axes origin PLUS the predicted translation, so a
+        # needed move shows the predicted frame shifted away from the current.
         predicted_layer_on = self._layers_visible["predicted_axes"]
         if predicted_layer_on and amplified_predicted_rotation is not None:
             predicted_pose = np.eye(4)
             predicted_pose[:3, :3] = (
                 self.calibration_matrix @ amplified_predicted_rotation
             )
+            predicted_pose[:3, 3] = target_translation_offset
             self._set_axes_pose(
                 ("predicted_x_axis", "predicted_y_axis", "predicted_z_axis"),
                 predicted_pose, visible=True,
@@ -1627,8 +1732,12 @@ class GuidanceWidgetRenderer3D:
             )
             target_probe_pose = np.eye(4)
             target_probe_pose[:3, :3] = R_target
+            # Tip placed at the live tip PLUS the predicted translation, using the
+            # same render-world offset as the predicted axes so both agree on the
+            # target location.
             target_probe_pose[:3, 3] = (
                 self.probe_origin_m - R_target @ self.probe_pivot_local_m
+                + target_translation_offset
             )
             for name in self.target_probe_node_names:
                 self.renderer.set_pose(name, target_probe_pose)

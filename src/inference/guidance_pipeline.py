@@ -10,6 +10,8 @@ Provides unified interface to run:
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Optional
+import os
 import time
 
 import cv2
@@ -21,6 +23,7 @@ from .fourch_landmark.fourch_landmark_pipeline import (
     run_fourch_core_prediction
 )
 from .rotation.rotation_predictor import create_rotation_predictor
+from .probe_pose import create_probe_pose_predictor, ProbePosePrediction
 from .pose_classification import pose_classification
 from .pose_classification.pose_classification import PoseClassifierResultPooler
 from .lvef.lvef_prediction import LVEFPredictor
@@ -33,6 +36,12 @@ class GuidancePipelineConfig:
     pose_classification_weights: str
     lvef_weights: str
     landmarks_per_chamber: dict
+    # Optional probe-pose (USGR PoseTransformer) standard-view guidance.
+    # When any of these is missing, the probe-pose stage is disabled and the
+    # pipeline falls back to rotation-only guidance.
+    probe_pose_weights: Optional[str] = None
+    probe_pose_norm_stats: Optional[str] = None
+    probe_pose_dino_weights: Optional[str] = None
 
 @dataclass
 class GuidancePipelineOutput:
@@ -40,6 +49,9 @@ class GuidancePipelineOutput:
     landmarks_tensor: np.ndarray
     rotation_prediction: np.ndarray
     pose_classification_prediction_rgb: np.ndarray
+    # Body-centric relative transform to the requested standard view (or None
+    # when the probe-pose predictor is unavailable).
+    probe_pose_prediction: Optional[ProbePosePrediction] = None
 
 
 class GuidancePipeline:
@@ -55,6 +67,25 @@ class GuidancePipeline:
             checkpoint_path=config.rotation_prediction_weights,
             device=self.__device
         )
+
+        # Optional probe-pose (USGR PoseTransformer) predictor for standard-view
+        # translation + rotation guidance. Enabled only when all three assets exist.
+        self.__probe_pose_predictor = None
+        _pp_paths = (
+            config.probe_pose_weights,
+            config.probe_pose_norm_stats,
+            config.probe_pose_dino_weights,
+        )
+        if all(_pp_paths) and all(os.path.exists(p) for p in _pp_paths):
+            self.__probe_pose_predictor = create_probe_pose_predictor(
+                checkpoint_path=config.probe_pose_weights,
+                norm_stats_path=config.probe_pose_norm_stats,
+                dino_weights_path=config.probe_pose_dino_weights,
+                device=self.__device,
+            )
+        else:
+            print("[GuidancePipeline] Probe-pose assets not found; standard-view "
+                  "guidance disabled (rotation-only fallback).")
 
         _model, _preprocess = pose_classification.load_pretrained_model(
             self.__device, weight_path=config.pose_classification_weights
@@ -75,7 +106,12 @@ class GuidancePipeline:
         if self.timing_enabled and self.__device.type == "cuda":
             torch.cuda.synchronize()
 
-    def run_inference(self, frame):
+    @property
+    def probe_pose_available(self) -> bool:
+        """True when the optional standard-view probe-pose predictor is loaded."""
+        return self.__probe_pose_predictor is not None and self.__probe_pose_predictor.model is not None
+
+    def run_inference(self, frame, target_view_index: int = 0):
         timing_on = self.timing_enabled
 
         if timing_on:
@@ -93,6 +129,14 @@ class GuidancePipeline:
         if timing_on:
             self._sync_for_timing()
             t2 = time.perf_counter()
+
+        # Run probe-pose (standard-view) prediction -> relative R + T to target view
+        probe_pose_prediction = None
+        if self.__probe_pose_predictor is not None:
+            probe_pose_prediction = self.__probe_pose_predictor.predict(frame, target_view_index)
+        if timing_on:
+            self._sync_for_timing()
+            t_pp = time.perf_counter()
 
         # Run pose classification
         pose_classification_prediction = pose_classification.run_pose_classifier(
@@ -116,7 +160,8 @@ class GuidancePipeline:
             self.last_timings = {
                 "landmark": (t1 - t0) * 1e3,
                 "rotation": (t2 - t1) * 1e3,
-                "pose_clf": (t3 - t2) * 1e3,
+                "probe_pose": (t_pp - t2) * 1e3,
+                "pose_clf": (t3 - t_pp) * 1e3,
                 "lvef_buf": (t4 - t3) * 1e3,
             }
 
@@ -124,7 +169,8 @@ class GuidancePipeline:
             cla=cla,
             landmarks_tensor=landmarks_tensor,
             rotation_prediction=rotation_prediction,
-            pose_classification_prediction_rgb=pose_classification_prediction
+            pose_classification_prediction_rgb=pose_classification_prediction,
+            probe_pose_prediction=probe_pose_prediction
         )
     
 
