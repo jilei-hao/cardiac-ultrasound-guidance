@@ -31,5 +31,5 @@
 ##################################
 source ./scripts/setup.sh && cusg-guidance-ui \
 --source simulator \
---frames-folder /data/jilei/vigil-data/lvef-example/tte002_clarius/00368617585550
+--frames-folder /Users/jileihao/dev/vigil-developer/cardiac-ultrasound-guidance/output/1777469821799232000
 

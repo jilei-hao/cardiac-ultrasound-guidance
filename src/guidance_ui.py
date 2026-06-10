@@ -346,6 +346,16 @@ class GuidanceUI:
                 else " (USGR unavailable -> using legacy)"
             print(f"🔀 rotation source: {self._rotation_source}{note}")
 
+        # 'k' — toggle ESKF (Kalman) smoothing of the probe-pose prediction.
+        def handle_toggle_filter():
+            if self._guidance_pipeline is None:
+                return
+            new_state = self._guidance_pipeline.set_probe_pose_filter(
+                not self._guidance_pipeline.probe_pose_filter_enabled
+            )
+            print(f"{'✅' if new_state else '⛔'} pose smoothing (Kalman): "
+                  f"{'on' if new_state else 'off'}")
+
         # Register on both windows so the hotkeys work regardless of which
         # one has keyboard focus.
         for window in (self._main_window, self._guidance_window):
@@ -366,6 +376,7 @@ class GuidanceUI:
             window.register_key_handler(']', handle_zoom_in)
             window.register_key_handler(';', handle_reset_camera)
             window.register_key_handler('g', handle_toggle_rotation_source)
+            window.register_key_handler('k', handle_toggle_filter)
             for _vi in range(NUM_VIEWS):
                 window.register_key_handler(str(_vi + 1), make_select_view(_vi))
 
@@ -428,6 +439,7 @@ class GuidanceUI:
                     self._guidance_pipeline.run_inference,
                     orig_gray_512,
                     self._target_view_index,
+                    frame_data.timestamp,
                 )
 
                 # Choose what drives the widget from the PREVIOUS frame's result.
@@ -597,7 +609,8 @@ class GuidanceUI:
             and self._guidance_pipeline.probe_pose_available
         )
         eff_source = self._rotation_source if (usgr_ok or self._rotation_source == 'legacy') else 'legacy*'
-        text = f"View: {self._target_view_index + 1} {view}  |  rot: {eff_source}"
+        filt = "on" if (usgr_ok and self._guidance_pipeline.probe_pose_filter_enabled) else "off"
+        text = f"View: {self._target_view_index + 1} {view}  |  rot: {eff_source}  |  smooth: {filt}"
         font = cv2.FONT_HERSHEY_SIMPLEX
         scale = 0.5
         thickness = 1

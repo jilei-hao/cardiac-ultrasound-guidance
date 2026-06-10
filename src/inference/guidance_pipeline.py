@@ -111,7 +111,18 @@ class GuidancePipeline:
         """True when the optional standard-view probe-pose predictor is loaded."""
         return self.__probe_pose_predictor is not None and self.__probe_pose_predictor.model is not None
 
-    def run_inference(self, frame, target_view_index: int = 0):
+    @property
+    def probe_pose_filter_enabled(self) -> bool:
+        """True when ESKF smoothing of the probe-pose prediction is on."""
+        return self.__probe_pose_predictor is not None and self.__probe_pose_predictor.use_filter
+
+    def set_probe_pose_filter(self, enabled: bool) -> bool:
+        """Enable/disable ESKF smoothing of the probe-pose prediction. Returns new state."""
+        if self.__probe_pose_predictor is not None:
+            self.__probe_pose_predictor.set_filter_enabled(enabled)
+        return self.probe_pose_filter_enabled
+
+    def run_inference(self, frame, target_view_index: int = 0, timestamp=None):
         timing_on = self.timing_enabled
 
         if timing_on:
@@ -133,7 +144,8 @@ class GuidancePipeline:
         # Run probe-pose (standard-view) prediction -> relative R + T to target view
         probe_pose_prediction = None
         if self.__probe_pose_predictor is not None:
-            probe_pose_prediction = self.__probe_pose_predictor.predict(frame, target_view_index)
+            probe_pose_prediction = self.__probe_pose_predictor.predict(
+                frame, target_view_index, timestamp)
         if timing_on:
             self._sync_for_timing()
             t_pp = time.perf_counter()

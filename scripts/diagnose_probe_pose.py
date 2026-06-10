@@ -37,6 +37,10 @@ def main():
     ap.add_argument("--base-dir", default="/Users/jileihao/data/vigil/2025-nov-demo_2246f")
     ap.add_argument("--view", default="A4C")
     ap.add_argument("--n", type=int, default=80)
+    ap.add_argument("--image-size", type=int, default=512)
+    ap.add_argument("--flip", action="store_true",
+                    help="horizontally mirror the frame before inference "
+                         "(test for the training-vs-CUSG L-R chirality mismatch)")
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
 
@@ -52,12 +56,16 @@ def main():
     print(f"normalizer T mean(cm)={np.round(nz.mean.numpy()[9:12]*100,2)} "
           f"std(cm)={np.round(nz.std.numpy()[9:12]*100,2)}\n")
 
-    pred = ProbePosePredictor(args.checkpoint, args.norm_stats, args.dino_weights, device)
+    pred = ProbePosePredictor(args.checkpoint, args.norm_stats, args.dino_weights, device,
+                              image_size=args.image_size)
 
     def run(files):
         T, ang = [], []
         for fp in files:
-            p = pred.predict(cv2.imread(fp, cv2.IMREAD_GRAYSCALE), view_idx)
+            img = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
+            if args.flip:
+                img = cv2.flip(img, 1)
+            p = pred.predict(img, view_idx)
             T.append(p.T_rel); ang.append(geodesic_deg(p.R_rel))
         return np.array(T), np.array(ang)
 

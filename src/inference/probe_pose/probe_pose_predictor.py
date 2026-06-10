@@ -26,6 +26,19 @@ import torch
 import einops
 
 from .usgr_model import PoseTransformer, Normalizer
+from .filter import PoseFilter
+
+
+# Default SE(3) ESKF noise params, tuned for smoothing the cm/few-degree jitter
+# of the relative-transform prediction (the USGR defaults are far looser and
+# drift on this scale). Lower sigma_vel + cm-scale measurement noise => ~3-7x
+# jitter reduction with sub-mm drift on a roughly-stationary view.
+DEFAULT_FILTER_KWARGS = dict(
+    sigma_pose=0.01,
+    sigma_vel=0.02,
+    sigma_meas_rot=0.1,
+    sigma_meas_trans=0.05,
+)
 
 
 # View classes (from usgr/usgr/guidance/datasets.py). Index == conditioning one-hot slot.
@@ -46,8 +59,12 @@ class ProbePosePrediction:
                   view, SVD-projected from the head's raw (unconstrained) output.
         T_rel:    (3,) translation in metres, in the probe's local frame.
         view_idx: index into ``CANONICAL_VIEW_LIST`` of the requested target view.
-        valid:    False if the RAW predicted rotation was degenerate (det <= 0);
-                  a coarse confidence flag (R_rel is always a valid rotation).
+        valid:    True when the pose is usable: either the RAW predicted rotation
+                  was sane (det > 0), or it was degenerate but the ESKF had state
+                  to extrapolate from (matching USGR realtime_inference.py). False
+                  only when the raw rotation was degenerate AND no filter state
+                  exists -- consumers should skip the pose then (R_rel is still a
+                  valid rotation matrix, but its value is meaningless).
     """
     R_rel: np.ndarray
     T_rel: np.ndarray
@@ -101,8 +118,23 @@ class ProbePosePredictor:
         embed_dim: int = 1024,
         depth: int = 4,
         num_heads: int = 16,
-        image_size: int = 384,
+        # USGR training default (DinoEncoderConfig.image_size = 512). Evaluating at
+        # 384 degrades the head: green-A4C rotation error 47.5deg -> 27.8deg when
+        # moving 384 -> 512 on ema_21000 (see scripts/diagnose_probe_pose.py).
+        image_size: int = 512,
         conditioning_dim: int = CLASS_LENGTH,
+        # L-R chirality: USGR training data is LV-on-left; CUSG frames are
+        # LV-on-right (the mirror). The training h-flip augmentation flips the
+        # image AND right-multiplies the source rotation by F=diag(1,-1,-1)
+        # (180deg about probe x), so a *converged* model is flip-equivariant and
+        # feeding the wrong chirality injects ~180deg-about-x error. ema_21000 is
+        # still flip-INVARIANT (output changes <5deg under flip) because it is
+        # undertrained, so this toggle is a no-op today -- leave OFF until a
+        # converged checkpoint, then confirm with the USGR dev whether the
+        # canonical poses want mirror-input-only or mirror-input + F-on-output.
+        mirror_input: bool = False,
+        use_filter: bool = True,
+        filter_kwargs: Optional[dict] = None,
     ):
         self.device = device
         self.checkpoint_path = checkpoint_path
@@ -114,8 +146,20 @@ class ProbePosePredictor:
         self.num_heads = num_heads
         self.image_size = image_size
         self.conditioning_dim = conditioning_dim
+        self.mirror_input = mirror_input
         self.model = None
         self.normalizer = None
+
+        # SE(3) ESKF smoothing of the predicted relative transform (reduces the
+        # frame-to-frame jitter of the raw model output). The filter is reset
+        # whenever the target view changes or time runs backwards.
+        self.use_filter = use_filter
+        self._filter_kwargs = filter_kwargs or dict(DEFAULT_FILTER_KWARGS)
+        self._filter: Optional[PoseFilter] = None
+        self._filter_view_idx: Optional[int] = None
+        self._last_ts: Optional[float] = None
+        if self.use_filter:
+            self._filter = PoseFilter(**self._filter_kwargs)
 
         # Reuse the dinov3 hub bundled at src/inference/dinov3 (same as RotationPredictor).
         if dinov3_repo_dir is None:
@@ -185,13 +229,28 @@ class ProbePosePredictor:
             self.model = None
             self.normalizer = None
 
+    def reset_filter(self) -> None:
+        """Reset the SE(3) smoother (call when the pose sequence is discontinuous)."""
+        self._filter = PoseFilter(**self._filter_kwargs) if self.use_filter else None
+        self._filter_view_idx = None
+        self._last_ts = None
+
+    def set_filter_enabled(self, enabled: bool) -> None:
+        """Turn ESKF smoothing on/off at runtime; resets filter state."""
+        self.use_filter = bool(enabled)
+        self.reset_filter()
+
     @torch.no_grad()
-    def predict(self, frame: np.ndarray, view_idx: int = 0) -> Optional[ProbePosePrediction]:
+    def predict(self, frame: np.ndarray, view_idx: int = 0,
+                timestamp: Optional[float] = None) -> Optional[ProbePosePrediction]:
         """Predict the relative transform from the current frame to ``view_idx``.
 
         Args:
             frame: grayscale [H, W] (uint8) or RGB/BGR [H, W, 3] ultrasound frame.
             view_idx: target standard view, 0-5 (see ``CANONICAL_VIEW_LIST``).
+            timestamp: frame time in nanoseconds. Required for ESKF smoothing;
+                when omitted (or filtering disabled) the raw per-frame prediction
+                is returned.
 
         Returns:
             ``ProbePosePrediction`` or ``None`` if the model is unavailable.
@@ -204,6 +263,11 @@ class ProbePosePredictor:
         try:
             if frame.ndim == 3:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # Match the training chirality (LV-on-left) when enabled. See
+            # mirror_input in __init__ for why this is OFF by default.
+            if self.mirror_input:
+                frame = cv2.flip(frame, 1)
 
             image_tensor = preprocess_image_for_model(frame).to(self.device)
 
@@ -225,6 +289,31 @@ class ProbePosePredictor:
             # a sane right-handed matrix (det>0) -- a coarse confidence signal.
             valid = bool(np.linalg.det(R_raw) > 0)
             R_rel = _nearest_rotation(R_raw)
+
+            # SE(3) ESKF smoothing of the (proper) relative transform. Degenerate
+            # raw rotations are never fed to the filter as measurements; instead
+            # (matching USGR realtime_inference.py) we extrapolate from the filter
+            # state, which gives a sane, continuous pose rather than the SVD
+            # projection of garbage. Only when the filter has no state yet (or is
+            # disabled) does an invalid frame surface as valid=False.
+            if self.use_filter and self._filter is not None and timestamp is not None:
+                view_changed = (self._filter_view_idx is not None
+                                and view_idx != self._filter_view_idx)
+                time_back = (self._last_ts is not None and timestamp < self._last_ts)
+                if view_changed or time_back:
+                    self._filter = PoseFilter(**self._filter_kwargs)
+                self._filter_view_idx = view_idx
+                self._last_ts = timestamp
+                if valid:
+                    filtered = self._filter(timestamp, np.concatenate([R_rel.flatten(), T_rel]))
+                elif self._filter._ekf.initialized:
+                    filtered = self._filter(timestamp)  # predict-only, no measurement
+                    valid = True
+                else:
+                    filtered = None
+                if filtered is not None:
+                    R_rel = _nearest_rotation(filtered[:9].reshape(3, 3))
+                    T_rel = filtered[9:12]
 
             return ProbePosePrediction(R_rel=R_rel, T_rel=T_rel, view_idx=view_idx, valid=valid)
 
