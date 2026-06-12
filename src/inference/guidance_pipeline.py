@@ -42,6 +42,18 @@ class GuidancePipelineConfig:
     probe_pose_weights: Optional[str] = None
     probe_pose_norm_stats: Optional[str] = None
     probe_pose_dino_weights: Optional[str] = None
+    # Encoder variant + input size the checkpoint was trained with. The demo
+    # checkpoints (ema_9000/21000) use convnext_base; the 0610 invivo run
+    # (ema_11000) uses dinov3_vitl16. Both emit 1024-dim features, so a wrong
+    # pairing fails loudly at load (mismatched ConvNeXt vs ViT keys).
+    probe_pose_dino_model: str = "dinov3_convnext_base"
+    probe_pose_image_size: int = 512
+    # H-flip the input frame before inference to match the training chirality
+    # (USGR trains LV-on-left). Clarius/CUSG frames are LV-on-right, so the
+    # flip-equivariant ema_11000 needs this ON for live use (verified: recovers
+    # a converged A4C prediction from 178deg to 4.6deg). Keep OFF when the input
+    # is already LV-on-left (e.g. the USGR invivo reproduction data).
+    probe_pose_mirror_input: bool = False
 
 @dataclass
 class GuidancePipelineOutput:
@@ -82,6 +94,9 @@ class GuidancePipeline:
                 norm_stats_path=config.probe_pose_norm_stats,
                 dino_weights_path=config.probe_pose_dino_weights,
                 device=self.__device,
+                dino_model=config.probe_pose_dino_model,
+                image_size=config.probe_pose_image_size,
+                mirror_input=config.probe_pose_mirror_input,
             )
         else:
             print("[GuidancePipeline] Probe-pose assets not found; standard-view "

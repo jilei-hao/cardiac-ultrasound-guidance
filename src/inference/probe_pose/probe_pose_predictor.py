@@ -41,10 +41,27 @@ DEFAULT_FILTER_KWARGS = dict(
 )
 
 
-# View classes (from usgr/usgr/guidance/datasets.py). Index == conditioning one-hot slot.
-#   0=A4C, 1=A2C, 2=PSAX_PAP, 3=PSAX_MV, 4=PLAX, 5=SC4C
+# View classes. Index == conditioning one-hot slot. The correct list depends on
+# which dataset the checkpoint was trained on:
+#   - SIMULATED (CanonicalViewDataset, e.g. demo convnext ema_9000/21000):
+#     order from usgr/usgr/guidance/datasets.py.
+#   - INVIVO (InVivoReferenceViewDataset, e.g. ema_11000): reference labels "1"-"6"
+#     sort to indices 0-5; anatomy from usgr/publication/evaluations/
+#     invivo_recording_analysis/server.py::VIEW_NAMES (confirmed with the USGR dev).
 CANONICAL_VIEW_LIST = ["A4C", "A2C", "PSAX_PAP", "PSAX_MV", "PLAX", "SC4C"]
+INVIVO_VIEW_LIST = ["PLAX", "PSAX", "A4C", "A2C", "SC4C", "SCIVC"]
+# Both lists are length 6, so one-hot indexing / NUM_VIEWS is shared.
 NUM_VIEWS = len(CANONICAL_VIEW_LIST)
+
+
+def view_list_for(view_set: str) -> list:
+    """Return the view-name list for ``view_set`` ('simulated' or 'invivo')."""
+    vs = (view_set or "simulated").strip().lower()
+    if vs == "invivo":
+        return INVIVO_VIEW_LIST
+    if vs == "simulated":
+        return CANONICAL_VIEW_LIST
+    raise ValueError(f"view_set must be 'simulated' or 'invivo', got {view_set!r}")
 
 # One-hot conditioning vector length the head was trained with (6 used + padding).
 CLASS_LENGTH = 12

@@ -5,6 +5,8 @@ from .probe_pose_predictor import (
     ProbePosePrediction,
     create_probe_pose_predictor,
     CANONICAL_VIEW_LIST,
+    INVIVO_VIEW_LIST,
+    view_list_for,
     NUM_VIEWS,
     CLASS_LENGTH,
 )
@@ -14,6 +16,8 @@ __all__ = [
     "ProbePosePrediction",
     "create_probe_pose_predictor",
     "CANONICAL_VIEW_LIST",
+    "INVIVO_VIEW_LIST",
+    "view_list_for",
     "NUM_VIEWS",
     "CLASS_LENGTH",
 ]

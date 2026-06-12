@@ -20,7 +20,7 @@ import time
 import cv2
 import numpy as np
 from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
-from inference.probe_pose import CANONICAL_VIEW_LIST, NUM_VIEWS
+from inference.probe_pose import NUM_VIEWS, view_list_for
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_dual_window_setup
 from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
@@ -85,9 +85,16 @@ class GuidanceUI:
         # Last frame's inference result, used to feed the widget render
         # for the current frame while inference runs in parallel.
         self._last_inference_output = None
-        # Target standard view for probe-pose guidance (index into
-        # CANONICAL_VIEW_LIST). Default A4C (0). Switched live via digit keys.
+        # Target standard view for probe-pose guidance (index into the active
+        # view list). Default index 0. Switched live via digit keys.
         self._target_view_index = 0
+        # View-name list for the HUD. Defaults to 'invivo' (the ema_11000
+        # mapping; the simulated demo-convnext order is legacy and was the wrong
+        # thing to show). Override with PROBE_POSE_VIEW_SET=simulated only if you
+        # load an old simulated checkpoint. One-hot indices are shared.
+        self._view_list = view_list_for(
+            self._env_config.get("probe_pose_view_set") or "invivo"
+        )
         # Which model drives the rotation arrows: 'usgr' (view-conditioned
         # PoseTransformer) or 'legacy' (RotationPredictor). Toggled with 'g'.
         # Falls back to 'legacy' automatically when the USGR model is absent.
@@ -114,6 +121,12 @@ class GuidanceUI:
             probe_pose_weights=self._env_config.get("probe_pose_weights"),
             probe_pose_norm_stats=self._env_config.get("probe_pose_norm_stats"),
             probe_pose_dino_weights=self._env_config.get("probe_pose_dino_weights"),
+            probe_pose_dino_model=self._env_config.get("probe_pose_dino_model")
+            or "dinov3_convnext_base",
+            probe_pose_image_size=self._env_config.get("probe_pose_image_size") or 512,
+            probe_pose_mirror_input=bool(
+                self._env_config.get("probe_pose_mirror_input")
+            ),
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
@@ -144,7 +157,13 @@ class GuidanceUI:
             wireframe=False,
             window_size=(512, 512),
             render_mode='fullscreen',
-            rotation_amplification=3.0,
+            # 1.0 = show the true predicted correction. USGR's R_rel is a metric
+            # transform, so amplifying it just magnifies prediction jitter
+            # (the legacy >1 default existed to make tiny RotationPredictor
+            # corrections visible). Overridable via PROBE_POSE_ROTATION_AMP.
+            rotation_amplification=float(
+                self._env_config.get("probe_pose_rotation_amp") or 1.0
+            ),
             legend_image_path=self._env_config["guidance_widget_legend_png_path"],
             probe_units='cm',
             reference_body_path=self._env_config.get("reference_body_path"),
@@ -329,7 +348,7 @@ class GuidanceUI:
                 if not (0 <= view_idx < NUM_VIEWS):
                     return
                 self._target_view_index = view_idx
-                print(f"🎯 target view: {view_idx + 1}={CANONICAL_VIEW_LIST[view_idx]}")
+                print(f"🎯 target view: {view_idx + 1}={self._view_list[view_idx]}")
             return handler
 
         # 'g' — toggle the rotation-arrow source between the view-conditioned
@@ -454,8 +473,14 @@ class GuidanceUI:
                         self._rotation_source == 'usgr'
                         and probe_pose is not None and probe_pose.valid
                     )
+                    # USGR's R_rel is the FORWARD correction (target = current @
+                    # R_rel), but render_widget composes the INVERSE (legacy
+                    # RotationPredictor convention, whose output was the
+                    # already-applied misalignment). Transpose at the boundary so
+                    # the ghost/arrows show the forward correction. The legacy
+                    # path keeps the renderer's native inverse convention.
                     last_rotation = (
-                        probe_pose.R_rel if use_usgr_rot
+                        probe_pose.R_rel.T if use_usgr_rot
                         else last_out.rotation_prediction
                     )
                     if probe_pose is not None and probe_pose.valid:
@@ -601,7 +626,7 @@ class GuidanceUI:
 
     def _draw_view_label(self, frame_bgr: np.ndarray) -> None:
         """Draw the active target view + rotation source bottom-left (in-place)."""
-        view = CANONICAL_VIEW_LIST[self._target_view_index]
+        view = self._view_list[self._target_view_index]
         # Reflect the EFFECTIVE source: 'usgr' silently falls back to legacy
         # when the probe-pose model is unavailable.
         usgr_ok = (
@@ -661,6 +686,26 @@ def main():
             "probe_pose_weights": os.getenv("PROBE_POSE_WEIGHTS"),
             "probe_pose_norm_stats": os.getenv("PROBE_POSE_NORM_STATS"),
             "probe_pose_dino_weights": os.getenv("PROBE_POSE_DINO_WEIGHTS"),
+            # Encoder variant + input size for the probe-pose checkpoint.
+            # Default convnext_base/512 (demo checkpoints); set
+            # PROBE_POSE_DINO_MODEL=dinov3_vitl16 for the 0610 invivo run.
+            "probe_pose_dino_model": os.getenv("PROBE_POSE_DINO_MODEL"),
+            # View-name set for the HUD: 'simulated' (demo convnext) or 'invivo'
+            # (ema_11000). Default simulated when unset.
+            "probe_pose_view_set": os.getenv("PROBE_POSE_VIEW_SET"),
+            # Visual gain on the predicted rotation in the 3D widget. Default 1.0
+            # (true correction); raise to exaggerate for visibility.
+            "probe_pose_rotation_amp": os.getenv("PROBE_POSE_ROTATION_AMP"),
+            # H-flip input to training chirality. ON for live Clarius (LV-right),
+            # OFF for LV-left input (invivo reproduction data). Truthy strings only.
+            "probe_pose_mirror_input": (
+                str(os.getenv("PROBE_POSE_MIRROR_INPUT", "")).strip().lower()
+                in ("1", "true", "yes", "on")
+            ),
+            "probe_pose_image_size": (
+                int(os.environ["PROBE_POSE_IMAGE_SIZE"])
+                if os.getenv("PROBE_POSE_IMAGE_SIZE") else None
+            ),
         },
         input_source=options.source,
         frames_folder=options.frames_folder,

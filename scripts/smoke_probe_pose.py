@@ -36,6 +36,9 @@ def main() -> int:
     ap.add_argument("--dino-weights", default=os.getenv("PROBE_POSE_DINO_WEIGHTS"))
     ap.add_argument("--frame", default=None, help="optional grayscale image to use")
     ap.add_argument("--device", default=None, help="cuda / mps / cpu (auto if unset)")
+    ap.add_argument("--dino-model", default="dinov3_convnext_base",
+                    help="encoder variant (e.g. dinov3_vitl16 for the 0610 run)")
+    ap.add_argument("--image-size", type=int, default=512, help="encoder input size")
     args = ap.parse_args()
 
     missing = [n for n, v in [
@@ -77,6 +80,8 @@ def main() -> int:
         norm_stats_path=args.norm_stats,
         dino_weights_path=args.dino_weights,
         device=device,
+        dino_model=args.dino_model,
+        image_size=args.image_size,
     )
     if predictor.model is None:
         print("❌ Predictor failed to load (see errors above).")
