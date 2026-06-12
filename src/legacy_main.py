@@ -311,7 +311,7 @@ def run_event_loop(options, config):
         if app_settings.use_threshold_for_pose_classification:
           crnt_classifier_result = cla
         else:
-          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess, use_landmarks_for_estimation=options.imglmk)
+          crnt_classifier_result = pc.run_pose_classifier(classifier_model, device, crop_frame, landmarks_tensor, preprocess, use_landmarks_for_estimation=options.imglmk).rgb
           
       # push the classifier result to the queue
       classifier_queue.put(crnt_classifier_result)
