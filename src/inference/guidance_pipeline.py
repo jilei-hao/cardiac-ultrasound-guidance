@@ -121,6 +121,16 @@ class GuidancePipeline:
         self.timing_enabled = False
         self.last_timings: dict = {}
 
+        # Wall-clock meter for the actual rate (Hz) at which frames are consumed
+        # into the LVEF buffer, updated every classify_and_buffer call and
+        # averaged over a ~1s window. This is the TRUE buffer fill cadence — if
+        # it sits below the publish rate, frames are being dropped upstream
+        # before reaching the buffer (which temporally subsamples LVEF input).
+        self.__lvef_buffer_fps = 0.0
+        self.__lvef_buffer_frame_count = 0
+        self.__lvef_buffer_fps_t0 = None
+        self.__lvef_buffer_fps_window_s = 1.0
+
 
     def _sync_for_timing(self):
         if self.timing_enabled and self.__device.type == "cuda":
@@ -178,7 +188,25 @@ class GuidancePipeline:
         # diagnostics see exactly what was classified each frame.
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_result)
+        self.__update_lvef_buffer_fps()
         return pose_result
+
+    def __update_lvef_buffer_fps(self):
+        """Update the windowed wall-clock LVEF buffer-consume rate."""
+        now = time.perf_counter()
+        if self.__lvef_buffer_fps_t0 is None:
+            self.__lvef_buffer_fps_t0 = now
+        self.__lvef_buffer_frame_count += 1
+        elapsed = now - self.__lvef_buffer_fps_t0
+        if elapsed >= self.__lvef_buffer_fps_window_s:
+            self.__lvef_buffer_fps = self.__lvef_buffer_frame_count / elapsed
+            self.__lvef_buffer_frame_count = 0
+            self.__lvef_buffer_fps_t0 = now
+
+    def get_lvef_buffer_fps(self) -> float:
+        """Actual rate (Hz) frames are being consumed into the LVEF buffer,
+        averaged over ~1s. Below the publish rate => frames dropped upstream."""
+        return self.__lvef_buffer_fps
 
     def get_pooled_pose_rgb(self):
         """Current smoothed (pooled) traffic-light colour, or None if empty."""
