@@ -179,23 +179,52 @@ class GuidancePipeline:
         """Current smoothed (pooled) traffic-light colour, or None if empty."""
         return self.__pose_classifier_result_pooler.get_pooled_result()
 
+    def predict_landmarks(self, frame):
+        """4-chamber landmark detection. Returns (cla, landmarks_tensor)."""
+        return run_fourch_core_prediction(self.__landmark_pipeline, frame)
+
+    def predict_rotation(self, frame):
+        """Probe rotation prediction, or None if the predictor is unavailable."""
+        if self.__rotation_predictor is None:
+            return None
+        return self.__rotation_predictor.predict_rotation(frame)
+
+    def predict_probe_pose(self, frame, target_view_index: int = 0, timestamp=None):
+        """Standard-view probe-pose prediction, or None if unavailable."""
+        if self.__probe_pose_predictor is None:
+            return None
+        return self.__probe_pose_predictor.predict(frame, target_view_index, timestamp)
+
     def run_display(self, frame, target_view_index: int = 0, timestamp=None):
         """Heavy path: landmark + rotation + probe-pose for display/guidance.
 
         Deliberately excludes pose classification and the LVEF buffer push
         (handled by ``classify_and_buffer``) so it can run off the critical
-        per-frame path.
+        per-frame path. Callers that distribute these stages across their own
+        threads (e.g. the vigil cardiac node, which runs rotation on the IMU
+        thread) can call the granular predict_* methods directly instead.
 
         Returns:
             tuple: (cla, landmarks_tensor, rotation_prediction, probe_pose_prediction)
         """
-        cla, landmarks_tensor = run_fourch_core_prediction(self.__landmark_pipeline, frame)
-        rotation_prediction = self.__rotation_predictor.predict_rotation(frame)
-        probe_pose_prediction = None
-        if self.__probe_pose_predictor is not None:
-            probe_pose_prediction = self.__probe_pose_predictor.predict(
-                frame, target_view_index, timestamp)
+        cla, landmarks_tensor = self.predict_landmarks(frame)
+        rotation_prediction = self.predict_rotation(frame)
+        probe_pose_prediction = self.predict_probe_pose(frame, target_view_index, timestamp)
         return cla, landmarks_tensor, rotation_prediction, probe_pose_prediction
+
+    # --- LVEF pass-throughs (so external orchestrators need not reach into the
+    #     predictor or its buffer directly) ---
+    def is_lvef_buffer_good(self) -> bool:
+        """True when the LVEF buffer is full and clean enough to predict on."""
+        return self.__lvef_predictor.is_buffer_video_good()
+
+    def run_lvef_prediction(self):
+        """Run a synchronous LVEF prediction over the current buffer."""
+        return self.__lvef_predictor.run_prediction()
+
+    def get_lvef_buffer_classifications(self):
+        """Per-frame PoseResults currently in the LVEF buffer (diagnostics)."""
+        return self.__lvef_predictor.get_buffer_classifications()
 
     def run_inference(self, frame, target_view_index: int = 0, timestamp=None):
         """Full per-frame pipeline (synchronous convenience).
