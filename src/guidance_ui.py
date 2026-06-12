@@ -20,6 +20,7 @@ import time
 import cv2
 import numpy as np
 from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
+from inference.probe_pose import NUM_VIEWS, view_list_for
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_dual_window_setup
 from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
@@ -84,6 +85,20 @@ class GuidanceUI:
         # Last frame's inference result, used to feed the widget render
         # for the current frame while inference runs in parallel.
         self._last_inference_output = None
+        # Target standard view for probe-pose guidance (index into the active
+        # view list). Default index 0. Switched live via digit keys.
+        self._target_view_index = 0
+        # View-name list for the HUD. Defaults to 'invivo' (the ema_11000
+        # mapping; the simulated demo-convnext order is legacy and was the wrong
+        # thing to show). Override with PROBE_POSE_VIEW_SET=simulated only if you
+        # load an old simulated checkpoint. One-hot indices are shared.
+        self._view_list = view_list_for(
+            self._env_config.get("probe_pose_view_set") or "invivo"
+        )
+        # Which model drives the rotation arrows: 'usgr' (view-conditioned
+        # PoseTransformer) or 'legacy' (RotationPredictor). Toggled with 'g'.
+        # Falls back to 'legacy' automatically when the USGR model is absent.
+        self._rotation_source = 'usgr'
     
     def initialize(self):
         """Initialize components"""
@@ -100,7 +115,18 @@ class GuidanceUI:
                 100: 12,  # Right Ventricle (RV)
                 150: 12,  # Left Atrium (LA)
                 200: 12,  # Right Atrium (RA)
-            }
+            },
+            # Optional USGR probe-pose (standard-view) guidance. Disabled
+            # automatically when any path is missing/None.
+            probe_pose_weights=self._env_config.get("probe_pose_weights"),
+            probe_pose_norm_stats=self._env_config.get("probe_pose_norm_stats"),
+            probe_pose_dino_weights=self._env_config.get("probe_pose_dino_weights"),
+            probe_pose_dino_model=self._env_config.get("probe_pose_dino_model")
+            or "dinov3_convnext_base",
+            probe_pose_image_size=self._env_config.get("probe_pose_image_size") or 512,
+            probe_pose_mirror_input=bool(
+                self._env_config.get("probe_pose_mirror_input")
+            ),
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
@@ -131,7 +157,13 @@ class GuidanceUI:
             wireframe=False,
             window_size=(512, 512),
             render_mode='fullscreen',
-            rotation_amplification=3.0,
+            # 1.0 = show the true predicted correction. USGR's R_rel is a metric
+            # transform, so amplifying it just magnifies prediction jitter
+            # (the legacy >1 default existed to make tiny RotationPredictor
+            # corrections visible). Overridable via PROBE_POSE_ROTATION_AMP.
+            rotation_amplification=float(
+                self._env_config.get("probe_pose_rotation_amp") or 1.0
+            ),
             legend_image_path=self._env_config["guidance_widget_legend_png_path"],
             probe_units='cm',
             reference_body_path=self._env_config.get("reference_body_path"),
@@ -309,6 +341,40 @@ class GuidanceUI:
                 return
             renderer.reset_camera()
 
+        # '1'..'6' — select the target standard view for probe-pose guidance.
+        #   1=A4C, 2=A2C, 3=PSAX_PAP, 4=PSAX_MV, 5=PLAX, 6=SC4C
+        def make_select_view(view_idx: int):
+            def handler():
+                if not (0 <= view_idx < NUM_VIEWS):
+                    return
+                self._target_view_index = view_idx
+                print(f"🎯 target view: {view_idx + 1}={self._view_list[view_idx]}")
+            return handler
+
+        # 'g' — toggle the rotation-arrow source between the view-conditioned
+        # USGR model and the legacy rotation predictor.
+        def handle_toggle_rotation_source():
+            self._rotation_source = (
+                'legacy' if self._rotation_source == 'usgr' else 'usgr'
+            )
+            available = (
+                self._guidance_pipeline is not None
+                and self._guidance_pipeline.probe_pose_available
+            )
+            note = "" if (available or self._rotation_source == 'legacy') \
+                else " (USGR unavailable -> using legacy)"
+            print(f"🔀 rotation source: {self._rotation_source}{note}")
+
+        # 'k' — toggle ESKF (Kalman) smoothing of the probe-pose prediction.
+        def handle_toggle_filter():
+            if self._guidance_pipeline is None:
+                return
+            new_state = self._guidance_pipeline.set_probe_pose_filter(
+                not self._guidance_pipeline.probe_pose_filter_enabled
+            )
+            print(f"{'✅' if new_state else '⛔'} pose smoothing (Kalman): "
+                  f"{'on' if new_state else 'off'}")
+
         # Register on both windows so the hotkeys work regardless of which
         # one has keyboard focus.
         for window in (self._main_window, self._guidance_window):
@@ -328,6 +394,10 @@ class GuidanceUI:
             window.register_key_handler('[', handle_zoom_out)
             window.register_key_handler(']', handle_zoom_in)
             window.register_key_handler(';', handle_reset_camera)
+            window.register_key_handler('g', handle_toggle_rotation_source)
+            window.register_key_handler('k', handle_toggle_filter)
+            for _vi in range(NUM_VIEWS):
+                window.register_key_handler(str(_vi + 1), make_select_view(_vi))
 
     def run(self):
         """Run the main UI loop."""
@@ -385,18 +455,43 @@ class GuidanceUI:
                 # — the 1-frame lag is invisible because the prediction is
                 # already smoothed by PoseClassifierResultPooler upstream.
                 inference_future = self._inference_executor.submit(
-                    self._guidance_pipeline.run_inference, orig_gray_512
+                    self._guidance_pipeline.run_inference,
+                    orig_gray_512,
+                    self._target_view_index,
+                    frame_data.timestamp,
                 )
 
-                last_rotation = (
-                    self._last_inference_output.rotation_prediction
-                    if self._last_inference_output is not None else None
-                )
+                # Choose what drives the widget from the PREVIOUS frame's result.
+                # Rotation source is selectable ('g'); translation always comes
+                # from the USGR probe-pose prediction when available.
+                last_out = self._last_inference_output
+                last_rotation = None
+                last_translation = None
+                if last_out is not None:
+                    probe_pose = getattr(last_out, "probe_pose_prediction", None)
+                    use_usgr_rot = (
+                        self._rotation_source == 'usgr'
+                        and probe_pose is not None and probe_pose.valid
+                    )
+                    # USGR's R_rel is the FORWARD correction (target = current @
+                    # R_rel), but render_widget composes the INVERSE (legacy
+                    # RotationPredictor convention, whose output was the
+                    # already-applied misalignment). Transpose at the boundary so
+                    # the ghost/arrows show the forward correction. The legacy
+                    # path keeps the renderer's native inverse convention.
+                    last_rotation = (
+                        probe_pose.R_rel.T if use_usgr_rot
+                        else last_out.rotation_prediction
+                    )
+                    if probe_pose is not None and probe_pose.valid:
+                        last_translation = probe_pose.T_rel
                 out_frame_guidance_bgr = self._guidance_widget_renderer.render_widget(
                     orig_frame,
                     qw, qx, qy, qz,
                     last_rotation,
+                    last_translation,
                 )
+                self._draw_view_label(out_frame_guidance_bgr)
 
                 t_widget = time.perf_counter() if timing_on else 0.0
 
@@ -529,6 +624,30 @@ class GuidanceUI:
         cv2.putText(frame_bgr, text, (x, y), font, scale,
                     (0, 255, 0), thickness, cv2.LINE_AA)
 
+    def _draw_view_label(self, frame_bgr: np.ndarray) -> None:
+        """Draw the active target view + rotation source bottom-left (in-place)."""
+        view = self._view_list[self._target_view_index]
+        # Reflect the EFFECTIVE source: 'usgr' silently falls back to legacy
+        # when the probe-pose model is unavailable.
+        usgr_ok = (
+            self._guidance_pipeline is not None
+            and self._guidance_pipeline.probe_pose_available
+        )
+        eff_source = self._rotation_source if (usgr_ok or self._rotation_source == 'legacy') else 'legacy*'
+        filt = "on" if (usgr_ok and self._guidance_pipeline.probe_pose_filter_enabled) else "off"
+        text = f"View: {self._target_view_index + 1} {view}  |  rot: {eff_source}  |  smooth: {filt}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 1
+        margin = 10
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+        x = margin
+        y = frame_bgr.shape[0] - margin
+        cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
+                    (0, 0, 0), thickness + 2, cv2.LINE_AA)
+        cv2.putText(frame_bgr, text, (x, y), font, scale,
+                    (0, 255, 255), thickness, cv2.LINE_AA)
+
     
 
 
@@ -561,6 +680,31 @@ def main():
             "reference_body_path": os.getenv(
                 "REFERENCE_BODY_PATH",
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "assets", "body_model.obj"),
+            ),
+            # USGR probe-pose (standard-view) guidance assets. Unset -> the
+            # feature is disabled and the app runs rotation-only.
+            "probe_pose_weights": os.getenv("PROBE_POSE_WEIGHTS"),
+            "probe_pose_norm_stats": os.getenv("PROBE_POSE_NORM_STATS"),
+            "probe_pose_dino_weights": os.getenv("PROBE_POSE_DINO_WEIGHTS"),
+            # Encoder variant + input size for the probe-pose checkpoint.
+            # Default convnext_base/512 (demo checkpoints); set
+            # PROBE_POSE_DINO_MODEL=dinov3_vitl16 for the 0610 invivo run.
+            "probe_pose_dino_model": os.getenv("PROBE_POSE_DINO_MODEL"),
+            # View-name set for the HUD: 'simulated' (demo convnext) or 'invivo'
+            # (ema_11000). Default simulated when unset.
+            "probe_pose_view_set": os.getenv("PROBE_POSE_VIEW_SET"),
+            # Visual gain on the predicted rotation in the 3D widget. Default 1.0
+            # (true correction); raise to exaggerate for visibility.
+            "probe_pose_rotation_amp": os.getenv("PROBE_POSE_ROTATION_AMP"),
+            # H-flip input to training chirality. ON for live Clarius (LV-right),
+            # OFF for LV-left input (invivo reproduction data). Truthy strings only.
+            "probe_pose_mirror_input": (
+                str(os.getenv("PROBE_POSE_MIRROR_INPUT", "")).strip().lower()
+                in ("1", "true", "yes", "on")
+            ),
+            "probe_pose_image_size": (
+                int(os.environ["PROBE_POSE_IMAGE_SIZE"])
+                if os.getenv("PROBE_POSE_IMAGE_SIZE") else None
             ),
         },
         input_source=options.source,

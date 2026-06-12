@@ -30,6 +30,7 @@ classifiers = [
 dependencies = [
     # Core numerical and imaging
     "numpy",
+    "scipy",  # SE(3) ESKF pose smoothing (probe-pose guidance)
     "opencv-python",
     "mss",
     "Pillow",
@@ -39,6 +40,7 @@ dependencies = [
     # Deep learning
     "torch",
     "torchvision",
+    "einops",  # vendored USGR PoseTransformer (probe-pose guidance)
     
     # Rendering
     "pyrender",
