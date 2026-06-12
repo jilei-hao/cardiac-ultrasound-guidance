@@ -36,6 +36,10 @@ class GuidancePipelineConfig:
     pose_classification_weights: str
     lvef_weights: str
     landmarks_per_chamber: dict
+    # Local dinov3 repo dir for the 4-chamber landmark backbone. None lets
+    # configure_fourch_landmark_pipeline fall back to its own default (e.g.
+    # torch.hub); deployments with an offline dinov3 checkout pass it here.
+    dinov3_repo_dir: Optional[str] = None
     # Optional probe-pose (USGR PoseTransformer) standard-view guidance.
     # When any of these is missing, the probe-pose stage is disabled and the
     # pipeline falls back to rotation-only guidance.
@@ -72,7 +76,8 @@ class GuidancePipeline:
         self.__landmark_pipeline = configure_fourch_landmark_pipeline(
             weight_path=config.fourch_landmark_weights,
             device=self.__device,
-            landmarks_per_chamber=config.landmarks_per_chamber
+            landmarks_per_chamber=config.landmarks_per_chamber,
+            dinov3_repo_dir=config.dinov3_repo_dir
         )
         self.__rotation_predictor = create_rotation_predictor(
             config_path=config.rotation_prediction_config,
