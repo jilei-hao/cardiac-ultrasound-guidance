@@ -28,6 +28,10 @@ from .pose_classification import pose_classification
 from .pose_classification.pose_classification import PoseClassifierResultPooler
 from .lvef.lvef_prediction import LVEFPredictor
 
+# The EchoNet LVEF model (r2plus1d_18) is trained on 112x112 frames. The LVEF
+# buffer input is resized to this regardless of the caller's display resolution.
+LVEF_INPUT_SIZE = 112
+
 @dataclass
 class GuidancePipelineConfig:
     fourch_landmark_weights: str
@@ -184,9 +188,16 @@ class GuidancePipeline:
         pose_result = self.classify(frame)
         # Smooth the colour for display/border stability (pooler keyed on rgb).
         self.__pose_classifier_result_pooler.add_result(pose_result.rgb)
+        # The EchoNet LVEF model (r2plus1d_18) was trained on 112x112. Callers
+        # pass the display/landmark-resolution frame (512x512 in the vigil
+        # cardiac node); feeding 512 to the model collapses LVEF to a near-
+        # constant (~48), destroying per-clip discrimination. Resize to 112 for
+        # the LVEF buffer only (classification/display keep their own sizes).
+        lvef_frame = cv2.resize(frame, (LVEF_INPUT_SIZE, LVEF_INPUT_SIZE),
+                                interpolation=cv2.INTER_AREA)
         # Buffer keeps the RAW per-frame result so the LVEF model and any
         # diagnostics see exactly what was classified each frame.
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+        frame_rgb = cv2.cvtColor(lvef_frame, cv2.COLOR_GRAY2RGB)
         self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_result)
         self.__update_lvef_buffer_fps()
         return pose_result
