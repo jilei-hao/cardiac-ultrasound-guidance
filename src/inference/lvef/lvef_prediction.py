@@ -63,13 +63,21 @@ class LVEFPredictor:
         self._frame_buffer.add_frame(frame, pose_classification_result)
 
 
-    def is_buffer_video_good(self): 
+    def is_buffer_video_good(self):
         """
         Check if the current video in the buffer is good for prediction.
         Returns:
             bool: True if the video is good, False otherwise.
         """
         return self._frame_buffer.is_video_good() # this should not be in frame buffer
+
+    def get_buffer_classifications(self):
+        """Return the per-frame PoseResult list currently in the buffer.
+
+        Useful for troubleshooting what colour/score distribution the LVEF
+        model is actually predicting on.
+        """
+        return self._frame_buffer.get_all_classifications()
 
     
     def run_prediction(self):

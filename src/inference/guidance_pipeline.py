@@ -28,6 +28,10 @@ from .pose_classification import pose_classification
 from .pose_classification.pose_classification import PoseClassifierResultPooler
 from .lvef.lvef_prediction import LVEFPredictor
 
+# The EchoNet LVEF model (r2plus1d_18) is trained on 112x112 frames. The LVEF
+# buffer input is resized to this regardless of the caller's display resolution.
+LVEF_INPUT_SIZE = 112
+
 @dataclass
 class GuidancePipelineConfig:
     fourch_landmark_weights: str
@@ -36,6 +40,10 @@ class GuidancePipelineConfig:
     pose_classification_weights: str
     lvef_weights: str
     landmarks_per_chamber: dict
+    # Local dinov3 repo dir for the 4-chamber landmark backbone. None lets
+    # configure_fourch_landmark_pipeline fall back to its own default (e.g.
+    # torch.hub); deployments with an offline dinov3 checkout pass it here.
+    dinov3_repo_dir: Optional[str] = None
     # Optional probe-pose (USGR PoseTransformer) standard-view guidance.
     # When any of these is missing, the probe-pose stage is disabled and the
     # pipeline falls back to rotation-only guidance.
@@ -72,7 +80,8 @@ class GuidancePipeline:
         self.__landmark_pipeline = configure_fourch_landmark_pipeline(
             weight_path=config.fourch_landmark_weights,
             device=self.__device,
-            landmarks_per_chamber=config.landmarks_per_chamber
+            landmarks_per_chamber=config.landmarks_per_chamber,
+            dinov3_repo_dir=config.dinov3_repo_dir
         )
         self.__rotation_predictor = create_rotation_predictor(
             config_path=config.rotation_prediction_config,
@@ -116,6 +125,16 @@ class GuidancePipeline:
         self.timing_enabled = False
         self.last_timings: dict = {}
 
+        # Wall-clock meter for the actual rate (Hz) at which frames are consumed
+        # into the LVEF buffer, updated every classify_and_buffer call and
+        # averaged over a ~1s window. This is the TRUE buffer fill cadence — if
+        # it sits below the publish rate, frames are being dropped upstream
+        # before reaching the buffer (which temporally subsamples LVEF input).
+        self.__lvef_buffer_fps = 0.0
+        self.__lvef_buffer_frame_count = 0
+        self.__lvef_buffer_fps_t0 = None
+        self.__lvef_buffer_fps_window_s = 1.0
+
 
     def _sync_for_timing(self):
         if self.timing_enabled and self.__device.type == "cuda":
@@ -137,69 +156,159 @@ class GuidancePipeline:
             self.__probe_pose_predictor.set_filter_enabled(enabled)
         return self.probe_pose_filter_enabled
 
-    def run_inference(self, frame, target_view_index: int = 0, timestamp=None):
-        timing_on = self.timing_enabled
+    def classify(self, frame):
+        """Run the traffic-light pose classifier on a single grayscale frame.
 
+        The deployed classifier is image-only, so this does NOT depend on
+        landmark detection and can run before the rest of the pipeline.
+
+        Returns:
+            PoseResult: continuous ``score`` + discretized ``rgb`` colour.
+        """
+        return pose_classification.run_pose_classifier(
+            self.__pose_classifier_model,
+            self.__device,
+            frame,
+            None,
+            self.__pose_classifier_preprocess
+        )
+
+    def classify_and_buffer(self, frame):
+        """Fast path: classify the frame and push it to the LVEF buffer.
+
+        Intentionally minimal so callers can run it on the critical per-frame
+        path without waiting for landmark/rotation/probe-pose. The RAW
+        per-frame PoseResult (score + rgb) is stored in the buffer; the
+        smoothed (pooled) colour for display is updated as a side effect and
+        is available via ``get_pooled_pose_rgb()``.
+
+        Returns:
+            PoseResult: the raw per-frame classification.
+        """
+        pose_result = self.classify(frame)
+        # Smooth the colour for display/border stability (pooler keyed on rgb).
+        self.__pose_classifier_result_pooler.add_result(pose_result.rgb)
+        # The EchoNet LVEF model (r2plus1d_18) was trained on 112x112. Callers
+        # pass the display/landmark-resolution frame (512x512 in the vigil
+        # cardiac node); feeding 512 to the model collapses LVEF to a near-
+        # constant (~48), destroying per-clip discrimination. Resize to 112 for
+        # the LVEF buffer only (classification/display keep their own sizes).
+        lvef_frame = cv2.resize(frame, (LVEF_INPUT_SIZE, LVEF_INPUT_SIZE),
+                                interpolation=cv2.INTER_AREA)
+        # Buffer keeps the RAW per-frame result so the LVEF model and any
+        # diagnostics see exactly what was classified each frame.
+        frame_rgb = cv2.cvtColor(lvef_frame, cv2.COLOR_GRAY2RGB)
+        self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_result)
+        self.__update_lvef_buffer_fps()
+        return pose_result
+
+    def __update_lvef_buffer_fps(self):
+        """Update the windowed wall-clock LVEF buffer-consume rate."""
+        now = time.perf_counter()
+        if self.__lvef_buffer_fps_t0 is None:
+            self.__lvef_buffer_fps_t0 = now
+        self.__lvef_buffer_frame_count += 1
+        elapsed = now - self.__lvef_buffer_fps_t0
+        if elapsed >= self.__lvef_buffer_fps_window_s:
+            self.__lvef_buffer_fps = self.__lvef_buffer_frame_count / elapsed
+            self.__lvef_buffer_frame_count = 0
+            self.__lvef_buffer_fps_t0 = now
+
+    def get_lvef_buffer_fps(self) -> float:
+        """Actual rate (Hz) frames are being consumed into the LVEF buffer,
+        averaged over ~1s. Below the publish rate => frames dropped upstream."""
+        return self.__lvef_buffer_fps
+
+    def get_pooled_pose_rgb(self):
+        """Current smoothed (pooled) traffic-light colour, or None if empty."""
+        return self.__pose_classifier_result_pooler.get_pooled_result()
+
+    def predict_landmarks(self, frame):
+        """4-chamber landmark detection. Returns (cla, landmarks_tensor)."""
+        return run_fourch_core_prediction(self.__landmark_pipeline, frame)
+
+    def predict_rotation(self, frame):
+        """Probe rotation prediction, or None if the predictor is unavailable."""
+        if self.__rotation_predictor is None:
+            return None
+        return self.__rotation_predictor.predict_rotation(frame)
+
+    def predict_probe_pose(self, frame, target_view_index: int = 0, timestamp=None):
+        """Standard-view probe-pose prediction, or None if unavailable."""
+        if self.__probe_pose_predictor is None:
+            return None
+        return self.__probe_pose_predictor.predict(frame, target_view_index, timestamp)
+
+    def run_display(self, frame, target_view_index: int = 0, timestamp=None):
+        """Heavy path: landmark + rotation + probe-pose for display/guidance.
+
+        Deliberately excludes pose classification and the LVEF buffer push
+        (handled by ``classify_and_buffer``) so it can run off the critical
+        per-frame path. Callers that distribute these stages across their own
+        threads (e.g. the vigil cardiac node, which runs rotation on the IMU
+        thread) can call the granular predict_* methods directly instead.
+
+        Returns:
+            tuple: (cla, landmarks_tensor, rotation_prediction, probe_pose_prediction)
+        """
+        cla, landmarks_tensor = self.predict_landmarks(frame)
+        rotation_prediction = self.predict_rotation(frame)
+        probe_pose_prediction = self.predict_probe_pose(frame, target_view_index, timestamp)
+        return cla, landmarks_tensor, rotation_prediction, probe_pose_prediction
+
+    # --- LVEF pass-throughs (so external orchestrators need not reach into the
+    #     predictor or its buffer directly) ---
+    def is_lvef_buffer_good(self) -> bool:
+        """True when the LVEF buffer is full and clean enough to predict on."""
+        return self.__lvef_predictor.is_buffer_video_good()
+
+    def run_lvef_prediction(self):
+        """Run a synchronous LVEF prediction over the current buffer."""
+        return self.__lvef_predictor.run_prediction()
+
+    def get_lvef_buffer_classifications(self):
+        """Per-frame PoseResults currently in the LVEF buffer (diagnostics)."""
+        return self.__lvef_predictor.get_buffer_classifications()
+
+    def run_inference(self, frame, target_view_index: int = 0, timestamp=None):
+        """Full per-frame pipeline (synchronous convenience).
+
+        Runs the fast classify->buffer step FIRST so the LVEF buffer is fed
+        before the heavier landmark/rotation/probe-pose work, then runs the
+        display pipeline. Callers that need the two paths decoupled across
+        threads should call ``classify_and_buffer()`` and ``run_display()``
+        directly (see the vigil cardiac node).
+        """
+        timing_on = self.timing_enabled
         if timing_on:
             self._sync_for_timing()
             t0 = time.perf_counter()
 
-        # Run inference on the given frame using the landmark pipeline
-        cla, landmarks_tensor = run_fourch_core_prediction(self.__landmark_pipeline, frame)
+        # Fast path: traffic-light classify + LVEF buffer push (before the rest).
+        self.classify_and_buffer(frame)
         if timing_on:
             self._sync_for_timing()
             t1 = time.perf_counter()
 
-        # Run rotation prediction
-        rotation_prediction = self.__rotation_predictor.predict_rotation(frame)
+        # Heavy path: landmark + rotation + probe-pose.
+        cla, landmarks_tensor, rotation_prediction, probe_pose_prediction = \
+            self.run_display(frame, target_view_index, timestamp)
         if timing_on:
             self._sync_for_timing()
             t2 = time.perf_counter()
-
-        # Run probe-pose (standard-view) prediction -> relative R + T to target view
-        probe_pose_prediction = None
-        if self.__probe_pose_predictor is not None:
-            probe_pose_prediction = self.__probe_pose_predictor.predict(
-                frame, target_view_index, timestamp)
-        if timing_on:
-            self._sync_for_timing()
-            t_pp = time.perf_counter()
-
-        # Run pose classification
-        pose_classification_prediction = pose_classification.run_pose_classifier(
-            self.__pose_classifier_model,
-            self.__device,
-            frame,
-            landmarks_tensor,
-            self.__pose_classifier_preprocess
-        )
-        self.__pose_classifier_result_pooler.add_result(pose_classification_prediction)
-        pose_classification_prediction = self.__pose_classifier_result_pooler.get_pooled_result()
-        if timing_on:
-            self._sync_for_timing()
-            t3 = time.perf_counter()
-
-        # Add frame to LVEF predictor buffer
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-        self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_classification_prediction)
-        if timing_on:
-            t4 = time.perf_counter()
             self.last_timings = {
-                "landmark": (t1 - t0) * 1e3,
-                "rotation": (t2 - t1) * 1e3,
-                "probe_pose": (t_pp - t2) * 1e3,
-                "pose_clf": (t3 - t_pp) * 1e3,
-                "lvef_buf": (t4 - t3) * 1e3,
+                "classify_buf": (t1 - t0) * 1e3,
+                "display": (t2 - t1) * 1e3,
             }
 
         return GuidancePipelineOutput(
             cla=cla,
             landmarks_tensor=landmarks_tensor,
             rotation_prediction=rotation_prediction,
-            pose_classification_prediction_rgb=pose_classification_prediction,
+            pose_classification_prediction_rgb=self.get_pooled_pose_rgb(),
             probe_pose_prediction=probe_pose_prediction
         )
-    
+
 
     def run_lvef_async(self) -> bool:
         """Submit LVEF prediction to thread pool. Returns True if submitted."""

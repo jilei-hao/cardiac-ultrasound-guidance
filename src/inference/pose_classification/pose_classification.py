@@ -1,8 +1,24 @@
+from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 import numpy as np
 from torchvision.models import resnet18, ResNet18_Weights
 import matplotlib.pyplot as plt
+
+
+@dataclass(frozen=True)
+class PoseResult:
+    """Result of one traffic-light pose classification.
+
+    Attributes:
+        score (float): Continuous regression output from the classifier.
+            score <= -1 -> red, -1 < score <= 0 -> yellow, score > 0 -> green
+            (see ``_regression_to_num_classes``).
+        rgb (tuple): The discretized traffic-light color as an (R, G, B) tuple.
+    """
+    score: float
+    rgb: tuple
 
 def load_pretrained_model(device, use_landmarks_for_estimation = False, weight_path=None):
     # ---- CHANGE THIS VARIABLE FOR IMAGE ONLY OR IMAGE + LANDMARKS ----
@@ -93,7 +109,8 @@ def run_pose_classifier(model, device, input_image, landmarks, transform, use_la
     # print(outputs)
     # _, predicted = torch.max(outputs.data,1)
 
-    return num_to_rgb(outputs.item())
+    score = outputs.item()
+    return PoseResult(score=score, rgb=num_to_rgb(score))
 
 
 def num_to_rgb(numerical_prediction, num_classes=3):

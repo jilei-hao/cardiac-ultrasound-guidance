@@ -2,17 +2,35 @@ import queue
 import threading
 import numpy as np
 
+from ..pose_classification.pose_classification import PoseResult
+
+
+def _as_pose_result(classifier_result):
+  """Normalize a classification into a PoseResult.
+
+  Accepts either a PoseResult (preferred) or a bare (R, G, B) rgb tuple from
+  legacy/transitional callers. A bare tuple is wrapped with score=NaN so that
+  ``is_video_good`` and diagnostics can always rely on ``.rgb`` / ``.score``.
+  """
+  if isinstance(classifier_result, PoseResult):
+    return classifier_result
+  return PoseResult(score=float("nan"), rgb=tuple(classifier_result))
+
+
 class ClassifiedFrame:
   """
-  A class to represent a frame with its classification result.
+  A class to represent a frame with its traffic-light classification result.
 
   Attributes:
     frame (any): The frame data.
-    classifier_result (any): The result of the classification.
+    classifier_result (PoseResult): The pose-classification result for this
+      frame, carrying both the continuous ``score`` and the discretized
+      ``rgb`` traffic-light color. (Historically this was just the rgb tuple;
+      it is now a ``pose_classification.PoseResult``.)
   """
   def __init__(self, frame, classifier_result):
     self.frame = frame
-    self.classifier_result = classifier_result # in rgb (0-255, 0-255, 0-255) format
+    self.classifier_result = classifier_result  # PoseResult(score, rgb)
 
 class FrameBuffer:
   """
@@ -34,6 +52,7 @@ class FrameBuffer:
     self.lock = threading.Lock()  # Lock for thread-safe access
 
   def add_frame(self, frame, classifier_result):
+    pose_result = _as_pose_result(classifier_result)
     with self.lock:  # Acquire the lock
       if self.frame_queue.full():
         old_frame = self.frame_queue.get()  # Remove the oldest frame
@@ -41,7 +60,7 @@ class FrameBuffer:
         # print(f"Removed frame with dimensions: {old_frame.frame.shape}")
         del old_frame
 
-      self.frame_queue.put(ClassifiedFrame(frame, classifier_result))  # Add the new frame
+      self.frame_queue.put(ClassifiedFrame(frame, pose_result))  # Add the new frame
 
   def get_number_of_frames(self):
     with self.lock:  # Acquire the lock
@@ -51,7 +70,16 @@ class FrameBuffer:
     with self.lock:  # Acquire the lock
       frame_array = list(self.frame_queue.queue)
       return np.array([frame.frame for frame in frame_array])
-    
+
+  def get_all_classifications(self):
+    """Return the per-frame PoseResult for every frame currently buffered.
+
+    Useful for troubleshooting (e.g. logging the score/colour distribution
+    the LVEF model is actually seeing at prediction time).
+    """
+    with self.lock:
+      return [cf.classifier_result for cf in list(self.frame_queue.queue)]
+
 
   def is_video_good(self):
     """
@@ -67,8 +95,8 @@ class FrameBuffer:
         return False
 
       # Example: Green + Yellow > 90% and Green > 30%
-      green_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result == (0, 255, 0))
-      yellow_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result == (255, 255, 0))
+      green_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result.rgb == (0, 255, 0))
+      yellow_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result.rgb == (255, 255, 0))
       total_count = self.frame_queue.qsize()
 
       pct_yellow = yellow_count / total_count * 100
