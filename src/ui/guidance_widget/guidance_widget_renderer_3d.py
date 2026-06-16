@@ -4,6 +4,7 @@ Provides 3D visualization of probe orientation and coordinate axes.
 """
 
 import os
+import threading
 import numpy as np
 import trimesh
 import time
@@ -91,6 +92,11 @@ class GuidanceWidgetRenderer3D:
                  reference_body_path: Optional[str] = None,
                  reference_body_units: Union[str, float] = 'cm',
                  reference_body_scale_ratio: float = 0.75,
+                 auto_fit_live_geometry: bool = True,
+                 live_geometry_rotation_euler_deg: Optional[tuple] = None,
+                 contact_marker_radius_m: float = 0.006,
+                 contact_marker_color: tuple = (1.0, 0.25, 0.2, 1.0),
+                 place_probe_at_world_pos: bool = False,
                  translation_arrow_length_m: float = 0.09,
                  translation_arrow_offset_m: float = 0.025,
                  rotation_arrow_radius_m: float = 0.0375,
@@ -213,6 +219,37 @@ class GuidanceWidgetRenderer3D:
         self.reference_body_units = reference_body_units
         self.reference_body_scale_ratio = float(reference_body_scale_ratio)
 
+        # --- Live patient geometry (Stevens point cloud + SMPL mesh) ---
+        # Inputs arrive on the ROS subscription thread via the set_* methods
+        # below; all pyrender scene mutation happens on the render thread in
+        # ``_apply_live_geometry`` (called from render_widget). The lock only
+        # guards the cached payloads + dirty flags.
+        self.auto_fit_live_geometry = bool(auto_fit_live_geometry)
+        self.place_probe_at_world_pos = bool(place_probe_at_world_pos)
+        self.contact_marker_radius_m = float(contact_marker_radius_m)
+        self.contact_marker_color = tuple(contact_marker_color)
+        if live_geometry_rotation_euler_deg is None:
+            self._live_geometry_rotation = np.eye(3)
+        else:
+            self._live_geometry_rotation = R.from_euler(
+                'xyz', live_geometry_rotation_euler_deg, degrees=True
+            ).as_matrix()
+        self._live_lock = threading.Lock()
+        self._live_point_cloud = None      # (points Nx3 world m, colors or None)
+        self._live_body = None             # (vertices Nx3 world m, faces Fx3)
+        self._probe_world_pos = None       # (3,) probe tip in world m, or None
+        self._pc_dirty = False
+        self._body_dirty = False
+        self._probe_dirty = False
+        # world->scene 4x4 (auto-fit from the SMPL mesh extents so the body
+        # sits where the static reference used to). None until first body.
+        self._world_to_scene = None
+        # latest SMPL mesh in *scene* coords, kept for closest-point contact.
+        self._live_body_scene_mesh = None
+        # whether the live SMPL body node is currently shown (vs static OBJ).
+        self._live_body_active = False
+        self._contact_marker_loaded = False
+
         self.translation_arrow_length_m = float(translation_arrow_length_m)
         self.translation_arrow_offset_m = float(translation_arrow_offset_m)
         self.rotation_arrow_radius_m = float(rotation_arrow_radius_m)
@@ -238,6 +275,8 @@ class GuidanceWidgetRenderer3D:
             "guidance_arrows": True,
             "target_probe": False,
             "reference_body": True,
+            "world_pcl": True,
+            "contact_marker": True,
         }
         # Stored at load time so the layer toggle can swap between the
         # original screen-corner pose and ``_HIDDEN_POSE``.
@@ -844,6 +883,13 @@ class GuidanceWidgetRenderer3D:
                 "reference_body",
                 self._reference_body_pose if visible else _HIDDEN_POSE,
             )
+        # Live-geometry layers are (re)applied on the render thread; mark
+        # them dirty so the toggle takes effect on the next frame.
+        if name in ("reference_body", "world_pcl", "contact_marker"):
+            with self._live_lock:
+                self._pc_dirty = True
+                self._body_dirty = True
+                self._probe_dirty = True
 
     def is_layer_visible(self, name: str) -> bool:
         return bool(self._layers_visible.get(name, False))
@@ -858,6 +904,227 @@ class GuidanceWidgetRenderer3D:
         self.debug_print = not self.debug_print
         print(f"🐛 debug_print = {self.debug_print}")
         return self.debug_print
+
+    # ------------------------------------------------------------------
+    # Live patient geometry API (thread-safe; cache only, no scene mutation)
+    # ------------------------------------------------------------------
+    def set_world_point_cloud(self, points, colors=None) -> None:
+        """Cache the latest Stevens VGGT point cloud (world meters).
+
+        Args:
+            points: (N, 3) array of point positions in the world/RealSense
+                frame, or None to clear the cloud.
+            colors: Optional (N, 3)/(N, 4) per-point colours (uint8 0-255 or
+                float 0-1).
+        Safe to call from the ROS subscription thread.
+        """
+        with self._live_lock:
+            if points is None:
+                self._live_point_cloud = None
+            else:
+                self._live_point_cloud = (
+                    np.asarray(points, dtype=np.float32).reshape(-1, 3),
+                    None if colors is None else np.asarray(colors),
+                )
+            self._pc_dirty = True
+
+    def set_reference_body_mesh(self, vertices, faces) -> None:
+        """Cache the latest live SMPL body mesh (world meters).
+
+        Pass ``vertices=None`` to drop the live body and fall back to the
+        static reference OBJ. Safe to call from the ROS subscription thread.
+        """
+        with self._live_lock:
+            if vertices is None or faces is None:
+                self._live_body = None
+            else:
+                self._live_body = (
+                    np.asarray(vertices, dtype=np.float32).reshape(-1, 3),
+                    np.asarray(faces),
+                )
+            self._body_dirty = True
+
+    def set_probe_world_position(self, xyz) -> None:
+        """Cache the probe tip position in world meters (or None to clear)."""
+        with self._live_lock:
+            self._probe_world_pos = (
+                None if xyz is None
+                else np.asarray(xyz, dtype=float).reshape(3)
+            )
+            self._probe_dirty = True
+
+    def set_world_to_scene_transform(self, transform) -> None:
+        """Override the world->scene 4x4 placement transform.
+
+        When set, ``auto_fit_live_geometry`` is disabled so this transform is
+        used verbatim for the point cloud, body mesh, and probe position.
+        """
+        with self._live_lock:
+            self._world_to_scene = (
+                None if transform is None
+                else np.asarray(transform, dtype=float).reshape(4, 4)
+            )
+            self.auto_fit_live_geometry = False
+            self._pc_dirty = self._body_dirty = self._probe_dirty = True
+
+    # ------------------------------------------------------------------
+    # Live patient geometry — render-thread application
+    # ------------------------------------------------------------------
+    def _compute_world_to_scene(self, vertices: np.ndarray) -> np.ndarray:
+        """Auto-fit transform mapping world-frame geometry into the scene.
+
+        Scales the SMPL body to roughly the size the static reference body
+        used and translates its center to the same below-the-probe anchor,
+        so the live body drops in where the static one was. An optional
+        ``_live_geometry_rotation`` is applied for orientation tuning.
+        """
+        mins = vertices.min(axis=0)
+        maxs = vertices.max(axis=0)
+        center = (mins + maxs) / 2.0
+        extent = float(np.max(maxs - mins))
+        if extent <= 0.0:
+            extent = 1.0
+        if self.probe_mesh is not None and hasattr(self.probe_mesh, 'extents'):
+            probe_size = float(np.max(self.probe_mesh.extents))
+        else:
+            probe_size = 0.04
+        target_size = probe_size * self.reference_body_scale_ratio * 3.0
+        scale = target_size / extent
+        anchor = self._compute_center_bottom_pose()[:3, 3]
+        sr = scale * self._live_geometry_rotation
+        transform = np.eye(4)
+        transform[:3, :3] = sr
+        transform[:3, 3] = anchor - sr @ center
+        return transform
+
+    def _world_to_scene_points(self, pts: np.ndarray) -> np.ndarray:
+        """Apply the cached world->scene transform to (N,3) points."""
+        T = self._world_to_scene
+        if T is None:
+            return np.asarray(pts, dtype=np.float32)
+        pts = np.asarray(pts, dtype=np.float32)
+        return (T[:3, :3] @ pts.T).T + T[:3, 3]
+
+    def _apply_live_geometry(self) -> None:
+        """Push cached live geometry into the scene (render thread only)."""
+        if self.renderer is None:
+            return
+        with self._live_lock:
+            pc_dirty, body_dirty, probe_dirty = (
+                self._pc_dirty, self._body_dirty, self._probe_dirty
+            )
+            if not (pc_dirty or body_dirty or probe_dirty):
+                return
+            point_cloud = self._live_point_cloud
+            body = self._live_body
+            probe_world = (
+                None if self._probe_world_pos is None
+                else self._probe_world_pos.copy()
+            )
+            self._pc_dirty = self._body_dirty = self._probe_dirty = False
+
+        # --- SMPL body mesh ---
+        if body_dirty:
+            if body is not None:
+                verts, faces = body
+                # Compute the placement transform once (from the first body)
+                # and freeze it, so later poses show the patient *moving*
+                # within a stable frame instead of rescaling every frame.
+                if self._world_to_scene is None and self.auto_fit_live_geometry:
+                    self._world_to_scene = self._compute_world_to_scene(verts)
+                verts_scene = self._world_to_scene_points(verts)
+                self._live_body_scene_mesh = trimesh.Trimesh(
+                    vertices=verts_scene, faces=faces, process=False
+                )
+                show_body = self._layers_visible["reference_body"]
+                self.renderer.update_mesh(
+                    "live_body", verts_scene, faces,
+                    material=self._skin_material(),
+                    pose=(np.eye(4) if show_body else _HIDDEN_POSE),
+                )
+                # Hide the static OBJ while the live body is shown.
+                if self._reference_body_loaded:
+                    self.renderer.set_pose("reference_body", _HIDDEN_POSE)
+                self._live_body_active = True
+            else:
+                # No live body — drop it and restore the static reference.
+                if self._live_body_active:
+                    self.renderer.remove_node("live_body", quiet=True)
+                    self._live_body_scene_mesh = None
+                    self._live_body_active = False
+                self._apply_reference_body_pose()
+
+        # --- world point cloud ---
+        if pc_dirty:
+            show_pc = self._layers_visible["world_pcl"]
+            if point_cloud is not None and show_pc:
+                pts, cols = point_cloud
+                self.renderer.set_point_cloud(
+                    "world_pcl", self._world_to_scene_points(pts), colors=cols,
+                )
+            else:
+                self.renderer.remove_node("world_pcl", quiet=True)
+
+        # --- contact marker (probe tip -> closest point on body) ---
+        if body_dirty or probe_dirty or pc_dirty:
+            self._update_contact_marker(probe_world)
+
+    def _skin_material(self):
+        import pyrender
+        return pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[0.85, 0.78, 0.72, 1.0],
+            metallicFactor=0.1,
+            roughnessFactor=0.85,
+        )
+
+    def _update_contact_marker(self, probe_world) -> None:
+        """Place a marker at the body-surface point nearest the probe tip."""
+        show = self._layers_visible["contact_marker"]
+        if (not show or probe_world is None
+                or self._live_body_scene_mesh is None):
+            if self._contact_marker_loaded:
+                self.renderer.set_pose("contact_marker", _HIDDEN_POSE)
+            return
+
+        probe_scene = self._world_to_scene_points(
+            probe_world.reshape(1, 3)
+        )[0]
+        try:
+            from trimesh.proximity import closest_point
+            pts, _dist, _tri = closest_point(
+                self._live_body_scene_mesh, probe_scene.reshape(1, 3)
+            )
+            contact_pt = pts[0]
+        except Exception as e:
+            if self.debug_print:
+                print(f"contact closest-point failed: {e}")
+            return
+
+        if not self._contact_marker_loaded:
+            import pyrender
+            sphere = trimesh.creation.icosphere(
+                subdivisions=2, radius=self.contact_marker_radius_m
+            )
+            marker_material = pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=list(self.contact_marker_color),
+                metallicFactor=0.0,
+                roughnessFactor=0.6,
+            )
+            self.renderer.add_node(
+                "contact_marker", sphere, pose=_HIDDEN_POSE,
+                material=marker_material, quiet=True,
+            )
+            self._contact_marker_loaded = True
+
+        pose = np.eye(4)
+        pose[:3, 3] = contact_pt
+        self.renderer.set_pose("contact_marker", pose)
+
+        # Optionally move the probe mesh to the body (position only; the IMU
+        # still drives orientation). Off by default until the IMU<->world
+        # orientation calibration is dialed in.
+        if self.place_probe_at_world_pos:
+            self.probe_origin_m = probe_scene.astype(float)
 
     def set_active_translation_arrow(self, direction: str) -> None:
         """Pick which translation guidance arrow renders.
@@ -1621,6 +1888,10 @@ class GuidanceWidgetRenderer3D:
         timing_on = self.timing_enabled
         if timing_on:
             t0 = time.perf_counter()
+
+        # Apply any pending live patient geometry (Stevens point cloud +
+        # SMPL body + contact marker). No-op unless a setter marked it dirty.
+        self._apply_live_geometry()
 
         # Convert quaternion to rotation matrix (returns 4x4)
         rotation_matrix = quaternion_to_matrix(qw, qx, qy, qz)
