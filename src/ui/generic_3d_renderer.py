@@ -225,11 +225,12 @@ class Generic3DRenderer:
         key_light_node = self.scene.add(key_light, pose=key_light_pose)
         self.light_nodes['key_point'] = key_light_node
     
-    def add_node(self, 
+    def add_node(self,
                  name: str,
                  mesh: Union[trimesh.Trimesh, pyrender.Mesh],
                  pose: Optional[np.ndarray] = None,
-                 material: Optional[pyrender.Material] = None) -> Optional[pyrender.Node]:
+                 material: Optional[pyrender.Material] = None,
+                 quiet: bool = False) -> Optional[pyrender.Node]:
         """
         Add a mesh node to the scene.
         
@@ -248,8 +249,8 @@ class Generic3DRenderer:
         
         # Remove existing node with same name
         if name in self.nodes:
-            self.remove_node(name)
-        
+            self.remove_node(name, quiet=quiet)
+
         try:
             # Convert trimesh to pyrender mesh if needed
             if isinstance(mesh, trimesh.Trimesh):
@@ -275,7 +276,8 @@ class Generic3DRenderer:
             self.nodes[name] = node
             self.meshes[name] = pr_mesh
 
-            print(f"Added node '{name}' to scene")
+            if not quiet:
+                print(f"Added node '{name}' to scene")
             return node
             
         except Exception as e:
@@ -324,28 +326,122 @@ class Generic3DRenderer:
             print(f"Failed to get pose for '{name}': {e}")
             return None
     
-    def remove_node(self, name: str) -> bool:
+    def remove_node(self, name: str, quiet: bool = False) -> bool:
         """
         Remove a node from the scene.
-        
+
         Args:
             name: Name of the node to remove
-            
+            quiet: Suppress the per-call log line (for high-frequency updates)
+
         Returns:
             bool: True if successful, False otherwise
         """
         if name not in self.nodes:
             return True  # Already removed
-        
+
         try:
             self.scene.remove_node(self.nodes[name])
             del self.nodes[name]
             del self.meshes[name]
-            print(f"Removed node '{name}' from scene")
+            if not quiet:
+                print(f"Removed node '{name}' from scene")
             return True
         except Exception as e:
             print(f"Failed to remove node '{name}': {e}")
             return False
+
+    def set_point_cloud(self,
+                        name: str,
+                        points: np.ndarray,
+                        colors: Optional[np.ndarray] = None,
+                        pose: Optional[np.ndarray] = None) -> Optional[pyrender.Node]:
+        """
+        Add or replace a coloured point-cloud node.
+
+        Args:
+            name: Unique node identifier (replaced if it already exists).
+            points: (N, 3) float array of point positions in scene meters.
+            colors: Optional (N, 3) or (N, 4) colours. Accepts uint8 0-255 or
+                float 0-1; passed through to pyrender.
+            pose: 4x4 transform applied to the cloud. Identity if None.
+
+        Returns:
+            The created pyrender.Node, or None on failure / empty cloud.
+        """
+        if not self.is_initialized:
+            print("Renderer not initialized. Call initialize() first.")
+            return None
+
+        try:
+            points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+        except Exception as e:
+            print(f"Invalid point cloud for '{name}': {e}")
+            return None
+
+        if points.shape[0] == 0:
+            # Nothing to show — drop any existing cloud so it doesn't linger.
+            self.remove_node(name, quiet=True)
+            return None
+
+        col = None
+        if colors is not None:
+            col = np.asarray(colors)
+            col = col.reshape(-1, col.shape[-1]) if col.ndim > 1 else col
+            if col.shape[0] != points.shape[0]:
+                col = None  # mismatched; let pyrender use the default colour
+
+        if name in self.nodes:
+            self.remove_node(name, quiet=True)
+
+        try:
+            pr_mesh = pyrender.Mesh.from_points(points, colors=col)
+            if pose is None:
+                pose = np.eye(4)
+            node = self.scene.add(pr_mesh, pose=pose)
+            self.nodes[name] = node
+            self.meshes[name] = pr_mesh
+            return node
+        except Exception as e:
+            print(f"Failed to set point cloud '{name}': {e}")
+            return None
+
+    def update_mesh(self,
+                    name: str,
+                    vertices: np.ndarray,
+                    faces: np.ndarray,
+                    material: Optional[pyrender.Material] = None,
+                    pose: Optional[np.ndarray] = None) -> Optional[pyrender.Node]:
+        """
+        Replace a node's geometry with a new triangle mesh.
+
+        Rebuilds the pyrender mesh from raw (vertices, faces) — intended for
+        per-pose geometry such as a live SMPL body. If ``pose`` is None and a
+        node of this name already exists, its current pose is preserved.
+
+        Returns the created pyrender.Node, or None on failure.
+        """
+        if not self.is_initialized:
+            print("Renderer not initialized. Call initialize() first.")
+            return None
+
+        if pose is None and name in self.nodes:
+            try:
+                pose = self.scene.get_pose(self.nodes[name])
+            except Exception:
+                pose = np.eye(4)
+
+        try:
+            tri = trimesh.Trimesh(
+                vertices=np.asarray(vertices, dtype=np.float32),
+                faces=np.asarray(faces),
+                process=False,
+            )
+        except Exception as e:
+            print(f"Invalid mesh for '{name}': {e}")
+            return None
+
+        return self.add_node(name, tri, pose=pose, material=material, quiet=True)
     
     def set_camera_pose(self, pose: np.ndarray):
         """
