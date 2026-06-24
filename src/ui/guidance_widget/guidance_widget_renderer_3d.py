@@ -360,6 +360,15 @@ class GuidanceWidgetRenderer3D:
         # calibrates.
         self.calibration_matrix = np.eye(3)
 
+        # Optional fixed body axes (scene/world frame) for the calibration target.
+        # When the live SMPL body is placed by an explicit world->scene transform
+        # (cardiac face-up mode), the patient's head/anterior directions are fixed
+        # in the scene, not camera-relative; calibrate() must target THOSE so the
+        # operator's canonical hold (tip superior, button up) maps to the body.
+        # None -> fall back to the camera-relative reference-body convention.
+        self.calibration_head_dir_world = None   # tip-points-to (patient superior)
+        self.calibration_up_world = None         # button-up (patient anterior)
+
         self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
         # Per-stage wall-clock for the last render_widget call, in ms.
@@ -1586,14 +1595,37 @@ class GuidanceWidgetRenderer3D:
         world +Y (button-up). IMU +Y is the cross product (Z × X) to
         keep the basis right-handed.
         """
-        head_dir = self._world_head_direction()
-        world_up = np.array([0.0, 1.0, 0.0])
+        if self.calibration_head_dir_world is not None:
+            # Live face-up body: target the patient's fixed scene axes so the
+            # canonical hold (tip toward the head, button up) maps onto the body,
+            # not onto a camera-relative direction.
+            head_dir = np.asarray(self.calibration_head_dir_world, float)
+            head_dir = head_dir / (np.linalg.norm(head_dir) + 1e-9)
+            world_up = np.asarray(self.calibration_up_world, float)
+            world_up = world_up / (np.linalg.norm(world_up) + 1e-9)
+        else:
+            head_dir = self._world_head_direction()
+            world_up = np.array([0.0, 1.0, 0.0])
         probe_x_world = head_dir
         probe_y_world = np.cross(world_up, head_dir)
         n = float(np.linalg.norm(probe_y_world))
         if n > 1e-9:
             probe_y_world = probe_y_world / n
         return np.column_stack([probe_x_world, probe_y_world, world_up])
+
+    def set_calibration_body_axes(self, head_dir_world, up_world) -> None:
+        """Fix the calibration target to the patient's scene axes (or None to
+        restore the camera-relative reference-body convention).
+
+        head_dir_world: unit-ish direction the probe tip points at calibration
+        (patient superior). up_world: the button-up direction (patient anterior).
+        """
+        if head_dir_world is None or up_world is None:
+            self.calibration_head_dir_world = None
+            self.calibration_up_world = None
+        else:
+            self.calibration_head_dir_world = np.asarray(head_dir_world, float).reshape(3)
+            self.calibration_up_world = np.asarray(up_world, float).reshape(3)
 
     def calibrate(self, qw: float = 1.0, qx: float = 0.0,
                   qy: float = 0.0, qz: float = 0.0):
