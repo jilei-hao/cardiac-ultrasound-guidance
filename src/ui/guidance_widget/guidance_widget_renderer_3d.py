@@ -78,6 +78,8 @@ class GuidanceWidgetRenderer3D:
                  probe_long_axis_length_m: Optional[float] = 0.12,
                  axes_length_m: float = 0.12,
                  y_axis_length_m: Optional[float] = None,
+                 x_axis_length_m: Optional[float] = None,
+                 x_axis_from_tail: bool = False,
                  axes_radius_m: float = 0.003,
                  camera_distance_m: Optional[float] = None,
                  camera_zoom: float = 0.68,
@@ -183,6 +185,15 @@ class GuidanceWidgetRenderer3D:
             float(y_axis_length_m)
             if y_axis_length_m is not None else float(axes_length_m)
         )
+        # The X (red) axis is the probe long axis. ``x_axis_from_tail`` draws it
+        # along -X (out the probe tail) instead of +X (into the body) and
+        # ``x_axis_length_m`` lets it run long, so it stretches out past the
+        # probe body instead of being occluded by it.
+        self.x_axis_length_m = (
+            float(x_axis_length_m)
+            if x_axis_length_m is not None else float(axes_length_m)
+        )
+        self.x_axis_from_tail = bool(x_axis_from_tail)
         self.axes_radius_m = axes_radius_m
         self.camera_distance_m = camera_distance_m
         self.camera_zoom = float(camera_zoom) if camera_zoom else 1.0
@@ -348,6 +359,15 @@ class GuidanceWidgetRenderer3D:
         # render-world axes. Set by calibrate(); identity until the user
         # calibrates.
         self.calibration_matrix = np.eye(3)
+
+        # Optional fixed body axes (scene/world frame) for the calibration target.
+        # When the live SMPL body is placed by an explicit world->scene transform
+        # (cardiac face-up mode), the patient's head/anterior directions are fixed
+        # in the scene, not camera-relative; calibrate() must target THOSE so the
+        # operator's canonical hold (tip superior, button up) maps to the body.
+        # None -> fall back to the camera-relative reference-body convention.
+        self.calibration_head_dir_world = None   # tip-points-to (patient superior)
+        self.calibration_up_world = None         # button-up (patient anterior)
 
         self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
 
@@ -544,25 +564,40 @@ class GuidanceWidgetRenderer3D:
             length=self.axes_length_m,
             y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
+            x_length=self.x_axis_length_m,
+            x_from_tail=self.x_axis_from_tail,
         )
         # Create predicted axes (semi-transparent version)
         self.predicted_axes = self._create_axes_cylinders(
             length=self.axes_length_m,
             y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
+            x_length=self.x_axis_length_m,
+            x_from_tail=self.x_axis_from_tail,
         )
 
     def _create_axes_cylinders(self, length: float = 1.0,
                                y_length: Optional[float] = None,
-                               radius: float = 0.02) -> dict:
+                               radius: float = 0.02,
+                               x_length: Optional[float] = None,
+                               x_from_tail: bool = False) -> dict:
         """Create coordinate axes as trimesh cylinder objects."""
         axes = {}
         y_len = float(y_length) if y_length is not None else length
+        x_len = float(x_length) if x_length is not None else length
 
-        # X-axis (red) - cylinder extending from origin along +X
-        x_shaft = trimesh.creation.cylinder(radius=radius, height=length)
+        # X-axis (red) - the probe long axis. By default it extends from the
+        # origin along +X (toward the imaging tip). With ``x_from_tail`` it starts
+        # at the probe tail (-X end) and extends further out along -X, so the shaft
+        # stretches clear of the probe body instead of being occluded by it.
+        x_shaft = trimesh.creation.cylinder(radius=radius, height=x_len)
         x_shaft.apply_transform(create_rotation_matrix('y', np.pi/2))
-        x_shaft.apply_transform(create_translation_matrix(length/2, 0, 0))
+        if x_from_tail:
+            tail = float(self.probe_long_axis_length_m or 0.0)
+            x_shaft.apply_transform(
+                create_translation_matrix(-(tail + x_len/2), 0, 0))
+        else:
+            x_shaft.apply_transform(create_translation_matrix(x_len/2, 0, 0))
         axes['x'] = x_shaft
 
         # Y-axis (green) - cylinder extending from origin along +Y. Often
@@ -1560,14 +1595,37 @@ class GuidanceWidgetRenderer3D:
         world +Y (button-up). IMU +Y is the cross product (Z × X) to
         keep the basis right-handed.
         """
-        head_dir = self._world_head_direction()
-        world_up = np.array([0.0, 1.0, 0.0])
+        if self.calibration_head_dir_world is not None:
+            # Live face-up body: target the patient's fixed scene axes so the
+            # canonical hold (tip toward the head, button up) maps onto the body,
+            # not onto a camera-relative direction.
+            head_dir = np.asarray(self.calibration_head_dir_world, float)
+            head_dir = head_dir / (np.linalg.norm(head_dir) + 1e-9)
+            world_up = np.asarray(self.calibration_up_world, float)
+            world_up = world_up / (np.linalg.norm(world_up) + 1e-9)
+        else:
+            head_dir = self._world_head_direction()
+            world_up = np.array([0.0, 1.0, 0.0])
         probe_x_world = head_dir
         probe_y_world = np.cross(world_up, head_dir)
         n = float(np.linalg.norm(probe_y_world))
         if n > 1e-9:
             probe_y_world = probe_y_world / n
         return np.column_stack([probe_x_world, probe_y_world, world_up])
+
+    def set_calibration_body_axes(self, head_dir_world, up_world) -> None:
+        """Fix the calibration target to the patient's scene axes (or None to
+        restore the camera-relative reference-body convention).
+
+        head_dir_world: unit-ish direction the probe tip points at calibration
+        (patient superior). up_world: the button-up direction (patient anterior).
+        """
+        if head_dir_world is None or up_world is None:
+            self.calibration_head_dir_world = None
+            self.calibration_up_world = None
+        else:
+            self.calibration_head_dir_world = np.asarray(head_dir_world, float).reshape(3)
+            self.calibration_up_world = np.asarray(up_world, float).reshape(3)
 
     def calibrate(self, qw: float = 1.0, qx: float = 0.0,
                   qy: float = 0.0, qz: float = 0.0):
