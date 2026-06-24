@@ -78,6 +78,8 @@ class GuidanceWidgetRenderer3D:
                  probe_long_axis_length_m: Optional[float] = 0.12,
                  axes_length_m: float = 0.12,
                  y_axis_length_m: Optional[float] = None,
+                 x_axis_length_m: Optional[float] = None,
+                 x_axis_from_tail: bool = False,
                  axes_radius_m: float = 0.003,
                  camera_distance_m: Optional[float] = None,
                  camera_zoom: float = 0.68,
@@ -183,6 +185,15 @@ class GuidanceWidgetRenderer3D:
             float(y_axis_length_m)
             if y_axis_length_m is not None else float(axes_length_m)
         )
+        # The X (red) axis is the probe long axis. ``x_axis_from_tail`` draws it
+        # along -X (out the probe tail) instead of +X (into the body) and
+        # ``x_axis_length_m`` lets it run long, so it stretches out past the
+        # probe body instead of being occluded by it.
+        self.x_axis_length_m = (
+            float(x_axis_length_m)
+            if x_axis_length_m is not None else float(axes_length_m)
+        )
+        self.x_axis_from_tail = bool(x_axis_from_tail)
         self.axes_radius_m = axes_radius_m
         self.camera_distance_m = camera_distance_m
         self.camera_zoom = float(camera_zoom) if camera_zoom else 1.0
@@ -544,25 +555,40 @@ class GuidanceWidgetRenderer3D:
             length=self.axes_length_m,
             y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
+            x_length=self.x_axis_length_m,
+            x_from_tail=self.x_axis_from_tail,
         )
         # Create predicted axes (semi-transparent version)
         self.predicted_axes = self._create_axes_cylinders(
             length=self.axes_length_m,
             y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
+            x_length=self.x_axis_length_m,
+            x_from_tail=self.x_axis_from_tail,
         )
 
     def _create_axes_cylinders(self, length: float = 1.0,
                                y_length: Optional[float] = None,
-                               radius: float = 0.02) -> dict:
+                               radius: float = 0.02,
+                               x_length: Optional[float] = None,
+                               x_from_tail: bool = False) -> dict:
         """Create coordinate axes as trimesh cylinder objects."""
         axes = {}
         y_len = float(y_length) if y_length is not None else length
+        x_len = float(x_length) if x_length is not None else length
 
-        # X-axis (red) - cylinder extending from origin along +X
-        x_shaft = trimesh.creation.cylinder(radius=radius, height=length)
+        # X-axis (red) - the probe long axis. By default it extends from the
+        # origin along +X (toward the imaging tip). With ``x_from_tail`` it starts
+        # at the probe tail (-X end) and extends further out along -X, so the shaft
+        # stretches clear of the probe body instead of being occluded by it.
+        x_shaft = trimesh.creation.cylinder(radius=radius, height=x_len)
         x_shaft.apply_transform(create_rotation_matrix('y', np.pi/2))
-        x_shaft.apply_transform(create_translation_matrix(length/2, 0, 0))
+        if x_from_tail:
+            tail = float(self.probe_long_axis_length_m or 0.0)
+            x_shaft.apply_transform(
+                create_translation_matrix(-(tail + x_len/2), 0, 0))
+        else:
+            x_shaft.apply_transform(create_translation_matrix(x_len/2, 0, 0))
         axes['x'] = x_shaft
 
         # Y-axis (green) - cylinder extending from origin along +Y. Often
