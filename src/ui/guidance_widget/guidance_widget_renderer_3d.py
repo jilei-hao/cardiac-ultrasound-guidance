@@ -2018,8 +2018,14 @@ class GuidanceWidgetRenderer3D:
             for name, _sub_tri, _pr_mesh in self.probe_node_specs:
                 self.renderer.set_pose(name, probe_pose)
 
+            # Axes originate at the probe tip (``probe_origin_m``), same as the
+            # probe mesh and guidance arrows, so they ride with the probe when it
+            # is off the scene origin (e.g. the ``fixed_body`` render anchor).
+            # In the legacy ``fixed_probe`` framing the tip sits at the origin, so
+            # this is a no-op there.
             axes_pose = np.eye(4)
             axes_pose[:3, :3] = R3
+            axes_pose[:3, 3] = self.probe_origin_m
             self._set_axes_pose(
                 ("x_axis", "y_axis", "z_axis"),
                 axes_pose, visible=self._layers_visible["current_axes"],
@@ -2043,15 +2049,16 @@ class GuidanceWidgetRenderer3D:
 
         # Predicted axes follow the prediction when one is available AND
         # the layer is on; otherwise they're hidden off-screen. They originate
-        # from the current-axes origin PLUS the predicted translation, so a
-        # needed move shows the predicted frame shifted away from the current.
+        # from the current-axes origin (the probe tip, ``probe_origin_m``) PLUS
+        # the predicted translation, so a needed move shows the predicted frame
+        # shifted away from the current.
         predicted_layer_on = self._layers_visible["predicted_axes"]
         if predicted_layer_on and amplified_predicted_rotation is not None:
             predicted_pose = np.eye(4)
             predicted_pose[:3, :3] = (
                 self.calibration_matrix @ amplified_predicted_rotation
             )
-            predicted_pose[:3, 3] = target_translation_offset
+            predicted_pose[:3, 3] = self.probe_origin_m + target_translation_offset
             self._set_axes_pose(
                 ("predicted_x_axis", "predicted_y_axis", "predicted_z_axis"),
                 predicted_pose, visible=True,
