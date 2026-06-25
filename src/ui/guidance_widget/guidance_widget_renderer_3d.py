@@ -105,6 +105,11 @@ class GuidanceWidgetRenderer3D:
                  rotation_arrow_offset_m: float = 0.025,
                  rotation_arrow_angle_deg: float = 200.0,
                  alignment_color_max_deg: float = 8.0,
+                 body_mesh_color: tuple = (0.85, 0.78, 0.72, 1.0),
+                 body_mesh_metallic: float = 0.1,
+                 body_mesh_roughness: float = 0.85,
+                 ghost_probe_color: tuple = (0.6, 0.85, 1.0),
+                 ghost_probe_alpha: float = 0.35,
                  debug_print: bool = False):
         """
         Initialize 3D guidance widget renderer.
@@ -269,6 +274,16 @@ class GuidanceWidgetRenderer3D:
         # Geodesic angle (deg) at or above which arrows render fully
         # orange; at 0° they render fully green. Linear ramp between.
         self.alignment_color_max_deg = float(alignment_color_max_deg)
+        # --- Configurable visualization look (body mesh + ghost target probe) ---
+        # body_mesh_color accepts RGB or RGBA (0-1); normalized to RGBA here.
+        # metallic/roughness are PBR knobs for the SMPL body surface.
+        # ghost_probe_color is RGB; ghost_probe_alpha sets the ghost transparency.
+        _bc = tuple(float(c) for c in body_mesh_color)
+        self.body_mesh_color = _bc if len(_bc) == 4 else (_bc[0], _bc[1], _bc[2], 1.0)
+        self.body_mesh_metallic = float(body_mesh_metallic)
+        self.body_mesh_roughness = float(body_mesh_roughness)
+        self.ghost_probe_color = tuple(float(c) for c in ghost_probe_color)[:3]
+        self.ghost_probe_alpha = float(ghost_probe_alpha)
         # When on, every prediction-driven arrow update prints a one-line
         # delta summary. Toggled at runtime via the 'd' hotkey.
         self.debug_print = bool(debug_print)
@@ -680,7 +695,7 @@ class GuidanceWidgetRenderer3D:
             # tint reads more clearly as "ghost / target" than a partly
             # see-through replica of the real probe.
             'target_probe': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.6, 0.85, 1.0, 0.35],
+                baseColorFactor=[*self.ghost_probe_color, self.ghost_probe_alpha],
                 metallicFactor=0.1,
                 roughnessFactor=0.6,
                 alphaMode='BLEND',
@@ -1107,9 +1122,9 @@ class GuidanceWidgetRenderer3D:
     def _skin_material(self):
         import pyrender
         return pyrender.MetallicRoughnessMaterial(
-            baseColorFactor=[0.85, 0.78, 0.72, 1.0],
-            metallicFactor=0.1,
-            roughnessFactor=0.85,
+            baseColorFactor=list(self.body_mesh_color),
+            metallicFactor=self.body_mesh_metallic,
+            roughnessFactor=self.body_mesh_roughness,
         )
 
     def _update_contact_marker(self, probe_world) -> None:
@@ -1721,12 +1736,10 @@ class GuidanceWidgetRenderer3D:
         self._default_body_orientation_world = body_orientation.copy()
         pose = self._compute_center_bottom_pose()
 
-        import pyrender
-        body_material = pyrender.MetallicRoughnessMaterial(
-            baseColorFactor=[0.85, 0.78, 0.72, 1.0],
-            metallicFactor=0.1,
-            roughnessFactor=0.85,
-        )
+        # Reuse the single configurable body material so the static reference
+        # body and the live SMPL body share one look (config.ini [Cardiac]
+        # body_mesh_color / metallic / roughness).
+        body_material = self._skin_material()
         self.renderer.add_node(
             "reference_body", body,
             pose=pose,
