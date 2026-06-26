@@ -26,6 +26,12 @@ from .rotation.rotation_predictor import create_rotation_predictor
 from .probe_pose import create_probe_pose_predictor, ProbePosePrediction
 from .pose_classification import pose_classification
 from .pose_classification.pose_classification import PoseClassifierResultPooler
+from .quality_score import (
+    create_quality_score_predictor,
+    QualityScorePooler,
+    score_to_traffic_rgb,
+    score_to_continuous_rgb,
+)
 from .lvef.lvef_prediction import LVEFPredictor
 
 # The EchoNet LVEF model (r2plus1d_18) is trained on 112x112 frames. The LVEF
@@ -63,6 +69,33 @@ class GuidancePipelineConfig:
     # is already LV-on-left (e.g. the USGR invivo reproduction data).
     probe_pose_mirror_input: bool = False
 
+    # Optional USGR quality-score ("traffic light v2") classifier. This is an
+    # ALTERNATIVE to the ResNet18 pose classifier above (pose_classification);
+    # both stay loaded and the consumer toggles between them at runtime. The
+    # stage is disabled (predictor not built) when quality_score_weights is
+    # missing. Needs a DINOv3 backbone, so quality_score_dino_weights must also
+    # be set (reuse the same dinov3_vitl16 file probe_pose uses).
+    quality_score_weights: Optional[str] = None
+    quality_score_dino_weights: Optional[str] = None
+    # Encoder variant + input size the score checkpoint was trained with. The
+    # delivered checkpoint reuses the probe_pose backbone (dinov3_vitl16 @ 512,
+    # 1024-d, num_heads=16); override if the USGR config.yaml says otherwise.
+    quality_score_dino_model: str = "dinov3_vitl16"
+    quality_score_image_size: int = 512
+    quality_score_num_heads: int = 16
+    quality_score_mirror_input: bool = False
+    # Traffic-light thresholds on the raw score (red < red_below <= yellow <
+    # green_above <= green). Used only in DISCRETE border mode.
+    quality_score_red_below: float = -1.0
+    quality_score_green_above: float = 1.0
+    quality_score_pool_size: int = 15
+    # Continuous-border mode: render the quality border as a smooth
+    # red->yellow->green gradient over [score_min, score_max] instead of the
+    # three discrete colours. Off by default; toggled at runtime ('Shift+m').
+    quality_score_continuous: bool = False
+    quality_score_score_min: float = -3.0
+    quality_score_score_max: float = 3.0
+
 @dataclass
 class GuidancePipelineOutput:
     cla: np.ndarray
@@ -72,6 +105,10 @@ class GuidancePipelineOutput:
     # Body-centric relative transform to the requested standard view (or None
     # when the probe-pose predictor is unavailable).
     probe_pose_prediction: Optional[ProbePosePrediction] = None
+    # USGR quality-score ("traffic light v2") outputs. Populated only when the
+    # quality classifier is loaded AND enabled; both None otherwise.
+    quality_score: Optional[float] = None
+    quality_rgb: Optional[tuple] = None
 
 
 class GuidancePipeline:
@@ -117,6 +154,42 @@ class GuidancePipeline:
         self.__pose_classifier_model = _model
         self.__pose_classifier_preprocess = _preprocess
         self.__pose_classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
+
+        # Optional USGR quality-score ("traffic light v2") classifier. Built only
+        # when both the head checkpoint and a DINOv3 backbone weights file are
+        # configured and exist (it loads a vitl16 backbone, so we don't pay that
+        # cost unless the user opts in). Loaded but inert until enabled via
+        # set_quality_score_enabled(True) -- the consumer toggles it at runtime.
+        self.__quality_score_predictor = None
+        self.__quality_score_enabled = False
+        self.__quality_score_pooler = QualityScorePooler(
+            pool_size=config.quality_score_pool_size
+        )
+        self.__quality_score_red_below = config.quality_score_red_below
+        self.__quality_score_green_above = config.quality_score_green_above
+        # Continuous-gradient border mode (vs. discrete R/Y/G). Display-only;
+        # toggled at runtime via set_quality_score_continuous().
+        self.__quality_score_continuous = bool(config.quality_score_continuous)
+        self.__quality_score_score_min = config.quality_score_score_min
+        self.__quality_score_score_max = config.quality_score_score_max
+        _qs_paths = (config.quality_score_weights, config.quality_score_dino_weights)
+        if all(_qs_paths) and all(os.path.exists(p) for p in _qs_paths):
+            self.__quality_score_predictor = create_quality_score_predictor(
+                checkpoint_path=config.quality_score_weights,
+                dino_weights_path=config.quality_score_dino_weights,
+                device=self.__device,
+                dino_model=config.quality_score_dino_model,
+                image_size=config.quality_score_image_size,
+                num_heads=config.quality_score_num_heads,
+                red_below=config.quality_score_red_below,
+                green_above=config.quality_score_green_above,
+                mirror_input=config.quality_score_mirror_input,
+            )
+        else:
+            print("[GuidancePipeline] Quality-score assets not found; the "
+                  "'traffic light v2' classifier is unavailable (legacy "
+                  "pose-classifier only).")
+
         self.__lvef_predictor = LVEFPredictor(device=self.__device, weight_path=config.lvef_weights)
         self.__executor = ThreadPoolExecutor(max_workers=2)
         self.__lvef_future = None
@@ -155,6 +228,84 @@ class GuidancePipeline:
         if self.__probe_pose_predictor is not None:
             self.__probe_pose_predictor.set_filter_enabled(enabled)
         return self.probe_pose_filter_enabled
+
+    @property
+    def quality_score_available(self) -> bool:
+        """True when the optional USGR quality-score classifier is loaded."""
+        return (self.__quality_score_predictor is not None
+                and self.__quality_score_predictor.model is not None)
+
+    @property
+    def quality_score_enabled(self) -> bool:
+        """True when the quality-score classifier is loaded AND switched on."""
+        return self.quality_score_available and self.__quality_score_enabled
+
+    def set_quality_score_enabled(self, enabled: bool) -> bool:
+        """Turn the quality-score classifier on/off. Returns the effective state.
+
+        Returns False (and stays off) if the predictor is unavailable, so the
+        caller can fall back to the legacy classifier. Clears the smoothing
+        window on every transition so a stale colour doesn't linger.
+        """
+        if not self.quality_score_available:
+            self.__quality_score_enabled = False
+            return False
+        self.__quality_score_enabled = bool(enabled)
+        self.__quality_score_pooler.clear()
+        return self.__quality_score_enabled
+
+    @property
+    def quality_score_continuous(self) -> bool:
+        """True when the quality border renders as a continuous gradient."""
+        return self.__quality_score_continuous
+
+    def set_quality_score_continuous(self, enabled: bool) -> bool:
+        """Switch the quality border between continuous gradient and discrete.
+
+        Display-only preference (does not touch the predictor or smoothing
+        window), so it can be set regardless of whether the quality model is
+        loaded/enabled; it just has no visible effect until the quality border
+        is the active traffic-light source. Returns the effective state.
+        """
+        self.__quality_score_continuous = bool(enabled)
+        return self.__quality_score_continuous
+
+    def classify_quality(self, frame):
+        """Run the USGR quality-score classifier on a single grayscale frame.
+
+        Returns the raw ``QualityResult`` (continuous score + traffic-light
+        rgb), or None when the classifier is unavailable. Updates the smoothing
+        window as a side effect; the smoothed colour is available via
+        ``get_pooled_quality_rgb()``.
+        """
+        if not self.quality_score_available:
+            return None
+        result = self.__quality_score_predictor.predict(frame)
+        if result is not None:
+            self.__quality_score_pooler.add_score(result.score)
+        return result
+
+    def get_pooled_quality_rgb(self):
+        """Smoothed (windowed-mean-score) quality border colour, or None.
+
+        Maps the pooled score to either a continuous red->yellow->green
+        gradient (when continuous mode is on) or the discrete three-colour
+        traffic light (default).
+        """
+        pooled_score = self.__quality_score_pooler.get_pooled_score()
+        if pooled_score is None:
+            return None
+        if self.__quality_score_continuous:
+            return score_to_continuous_rgb(
+                pooled_score,
+                self.__quality_score_score_min,
+                self.__quality_score_score_max,
+            )
+        return score_to_traffic_rgb(
+            pooled_score,
+            self.__quality_score_red_below,
+            self.__quality_score_green_above,
+        )
 
     def classify(self, frame):
         """Run the traffic-light pose classifier on a single grayscale frame.
@@ -290,6 +441,19 @@ class GuidancePipeline:
             self._sync_for_timing()
             t1 = time.perf_counter()
 
+        # Optional USGR quality classifier ("traffic light v2"). Skipped unless
+        # enabled (it runs a DINOv3 backbone, so we don't pay for it otherwise).
+        quality_score = None
+        quality_rgb = None
+        if self.quality_score_enabled:
+            quality_result = self.classify_quality(frame)
+            if quality_result is not None:
+                quality_score = quality_result.score
+                quality_rgb = self.get_pooled_quality_rgb()
+        if timing_on:
+            self._sync_for_timing()
+            t_quality = time.perf_counter()
+
         # Heavy path: landmark + rotation + probe-pose.
         cla, landmarks_tensor, rotation_prediction, probe_pose_prediction = \
             self.run_display(frame, target_view_index, timestamp)
@@ -298,7 +462,8 @@ class GuidancePipeline:
             t2 = time.perf_counter()
             self.last_timings = {
                 "classify_buf": (t1 - t0) * 1e3,
-                "display": (t2 - t1) * 1e3,
+                "quality": (t_quality - t1) * 1e3,
+                "display": (t2 - t_quality) * 1e3,
             }
 
         return GuidancePipelineOutput(
@@ -306,7 +471,9 @@ class GuidancePipeline:
             landmarks_tensor=landmarks_tensor,
             rotation_prediction=rotation_prediction,
             pose_classification_prediction_rgb=self.get_pooled_pose_rgb(),
-            probe_pose_prediction=probe_pose_prediction
+            probe_pose_prediction=probe_pose_prediction,
+            quality_score=quality_score,
+            quality_rgb=quality_rgb,
         )
 
 

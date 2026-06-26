@@ -335,6 +335,13 @@ class QtImageWindow(AbstractImageWindow):
             Qt.Key.Key_W: 'w',
             Qt.Key.Key_A: 'a',
             Qt.Key.Key_D: 'd',
+            # Letters with SHIFTED bindings ('Shift+c' reset-calibration,
+            # 'Shift+m' continuous-border) must be mapped explicitly so they
+            # lowercase here; otherwise the Shift fallback uses event.text(),
+            # which returns 'C'/'M' and dispatches as 'Shift+C'/'Shift+M',
+            # missing the lowercase handler keys.
+            Qt.Key.Key_C: 'c',
+            Qt.Key.Key_M: 'm',
             # Punctuation used by camera nudge / reset hotkeys. Mapping
             # these explicitly bypasses ``event.text()``, which on some
             # macOS keyboard layouts can return empty for punctuation
