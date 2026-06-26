@@ -60,6 +60,20 @@ from ..probe_pose.usgr_model.transformer import TransformerHead
 DEFAULT_RED_BELOW = -1.0
 DEFAULT_GREEN_ABOVE = 1.0
 
+# Score range over which the CONTINUOUS gradient spans red->yellow->green. The
+# USGR reference visualizer (visualize_quality_scores.py) defaults to [-3, 3]
+# with yellow centred at 0; we mirror that so the live border matches it.
+DEFAULT_SCORE_MIN = -3.0
+DEFAULT_SCORE_MAX = 3.0
+
+# Continuous-gradient endpoints (RGB). Same three anchor colours the USGR
+# reference visualizer uses (it expresses them in BGR); kept here in RGB to
+# match the rest of this module. red @ score_min, yellow @ midpoint,
+# green @ score_max.
+_GRADIENT_LOW_RGB = (220, 55, 45)    # red
+_GRADIENT_MID_RGB = (230, 210, 45)   # yellow
+_GRADIENT_HIGH_RGB = (55, 210, 70)   # green
+
 
 def score_to_traffic_rgb(
     score: float,
@@ -77,6 +91,35 @@ def score_to_traffic_rgb(
     if score >= green_above:
         return (0, 255, 0)
     return (255, 255, 0)
+
+
+def score_to_continuous_rgb(
+    score: float,
+    score_min: float = DEFAULT_SCORE_MIN,
+    score_max: float = DEFAULT_SCORE_MAX,
+) -> tuple:
+    """Map a continuous quality score to a CONTINUOUS red->yellow->green (R, G, B).
+
+    Unlike ``score_to_traffic_rgb`` (which quantizes to three colours), this
+    linearly interpolates the border colour across the score range so it
+    changes smoothly as view quality drifts. The score is clipped to
+    ``[score_min, score_max]``; the lower half fades red->yellow and the upper
+    half yellow->green, with yellow at the midpoint. Mirrors the USGR reference
+    visualizer's ``score_color_bgr``.
+    """
+    span = score_max - score_min
+    if span <= 0:
+        # Degenerate range: fall back to the midpoint (yellow) colour.
+        return _GRADIENT_MID_RGB
+    t = (min(max(score, score_min), score_max) - score_min) / span
+
+    if t < 0.5:
+        u = t / 0.5
+        lo, hi = _GRADIENT_LOW_RGB, _GRADIENT_MID_RGB
+    else:
+        u = (t - 0.5) / 0.5
+        lo, hi = _GRADIENT_MID_RGB, _GRADIENT_HIGH_RGB
+    return tuple(int(round(lo[i] * (1.0 - u) + hi[i] * u)) for i in range(3))
 
 
 @dataclass(frozen=True)

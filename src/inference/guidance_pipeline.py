@@ -30,6 +30,7 @@ from .quality_score import (
     create_quality_score_predictor,
     QualityScorePooler,
     score_to_traffic_rgb,
+    score_to_continuous_rgb,
 )
 from .lvef.lvef_prediction import LVEFPredictor
 
@@ -84,10 +85,16 @@ class GuidancePipelineConfig:
     quality_score_num_heads: int = 16
     quality_score_mirror_input: bool = False
     # Traffic-light thresholds on the raw score (red < red_below <= yellow <
-    # green_above <= green).
+    # green_above <= green). Used only in DISCRETE border mode.
     quality_score_red_below: float = -1.0
     quality_score_green_above: float = 1.0
     quality_score_pool_size: int = 15
+    # Continuous-border mode: render the quality border as a smooth
+    # red->yellow->green gradient over [score_min, score_max] instead of the
+    # three discrete colours. Off by default; toggled at runtime ('Shift+m').
+    quality_score_continuous: bool = False
+    quality_score_score_min: float = -3.0
+    quality_score_score_max: float = 3.0
 
 @dataclass
 class GuidancePipelineOutput:
@@ -160,6 +167,11 @@ class GuidancePipeline:
         )
         self.__quality_score_red_below = config.quality_score_red_below
         self.__quality_score_green_above = config.quality_score_green_above
+        # Continuous-gradient border mode (vs. discrete R/Y/G). Display-only;
+        # toggled at runtime via set_quality_score_continuous().
+        self.__quality_score_continuous = bool(config.quality_score_continuous)
+        self.__quality_score_score_min = config.quality_score_score_min
+        self.__quality_score_score_max = config.quality_score_score_max
         _qs_paths = (config.quality_score_weights, config.quality_score_dino_weights)
         if all(_qs_paths) and all(os.path.exists(p) for p in _qs_paths):
             self.__quality_score_predictor = create_quality_score_predictor(
@@ -242,6 +254,22 @@ class GuidancePipeline:
         self.__quality_score_pooler.clear()
         return self.__quality_score_enabled
 
+    @property
+    def quality_score_continuous(self) -> bool:
+        """True when the quality border renders as a continuous gradient."""
+        return self.__quality_score_continuous
+
+    def set_quality_score_continuous(self, enabled: bool) -> bool:
+        """Switch the quality border between continuous gradient and discrete.
+
+        Display-only preference (does not touch the predictor or smoothing
+        window), so it can be set regardless of whether the quality model is
+        loaded/enabled; it just has no visible effect until the quality border
+        is the active traffic-light source. Returns the effective state.
+        """
+        self.__quality_score_continuous = bool(enabled)
+        return self.__quality_score_continuous
+
     def classify_quality(self, frame):
         """Run the USGR quality-score classifier on a single grayscale frame.
 
@@ -258,10 +286,21 @@ class GuidancePipeline:
         return result
 
     def get_pooled_quality_rgb(self):
-        """Smoothed (windowed-mean-score) quality traffic-light colour, or None."""
+        """Smoothed (windowed-mean-score) quality border colour, or None.
+
+        Maps the pooled score to either a continuous red->yellow->green
+        gradient (when continuous mode is on) or the discrete three-colour
+        traffic light (default).
+        """
         pooled_score = self.__quality_score_pooler.get_pooled_score()
         if pooled_score is None:
             return None
+        if self.__quality_score_continuous:
+            return score_to_continuous_rgb(
+                pooled_score,
+                self.__quality_score_score_min,
+                self.__quality_score_score_max,
+            )
         return score_to_traffic_rgb(
             pooled_score,
             self.__quality_score_red_below,

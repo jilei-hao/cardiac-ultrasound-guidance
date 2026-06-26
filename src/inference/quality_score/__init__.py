@@ -14,6 +14,9 @@ from .quality_score_predictor import (
     QualityScorePooler,
     create_quality_score_predictor,
     score_to_traffic_rgb,
+    score_to_continuous_rgb,
+    DEFAULT_SCORE_MIN,
+    DEFAULT_SCORE_MAX,
 )
 
 __all__ = [
@@ -23,4 +26,7 @@ __all__ = [
     "QualityScorePooler",
     "create_quality_score_predictor",
     "score_to_traffic_rgb",
+    "score_to_continuous_rgb",
+    "DEFAULT_SCORE_MIN",
+    "DEFAULT_SCORE_MAX",
 ]

@@ -104,6 +104,12 @@ class GuidanceUI:
         # Defaults to 'legacy'; the quality model is opt-in and only runs while
         # selected. Falls back to 'legacy' when the quality model is absent.
         self._traffic_light_source = 'legacy'
+        # Quality-border colour mode: discrete R/Y/G (default) or a continuous
+        # red->yellow->green gradient. Toggled with 'Shift+m'; only affects the
+        # 'quality' source. Seeded from QUALITY_SCORE_CONTINUOUS.
+        self._traffic_light_continuous = bool(
+            self._env_config.get("quality_score_continuous")
+        )
     
     def initialize(self):
         """Initialize components"""
@@ -155,6 +161,20 @@ class GuidanceUI:
                 else 1.0
             ),
             quality_score_pool_size=self._env_config.get("quality_score_pool_size") or 15,
+            # Continuous-gradient border mode (toggled at runtime with 'Shift+m').
+            quality_score_continuous=bool(
+                self._env_config.get("quality_score_continuous")
+            ),
+            quality_score_score_min=(
+                self._env_config["quality_score_score_min"]
+                if self._env_config.get("quality_score_score_min") is not None
+                else -3.0
+            ),
+            quality_score_score_max=(
+                self._env_config["quality_score_score_max"]
+                if self._env_config.get("quality_score_score_max") is not None
+                else 3.0
+            ),
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
@@ -414,6 +434,22 @@ class GuidanceUI:
                 self._traffic_light_source = 'legacy'
             print(f"🚦 traffic light: {self._traffic_light_source}")
 
+        # 'Shift+m' — toggle the quality border between the discrete three-colour
+        # traffic light and a continuous red->yellow->green gradient. Affects the
+        # 'quality' source only (the legacy classifier has no continuous score),
+        # so it's a no-op visually until the quality border is active ('m').
+        def handle_toggle_continuous_border():
+            self._traffic_light_continuous = not self._traffic_light_continuous
+            if self._guidance_pipeline is not None:
+                self._guidance_pipeline.set_quality_score_continuous(
+                    self._traffic_light_continuous
+                )
+            mode = 'continuous gradient' if self._traffic_light_continuous \
+                else 'discrete R/Y/G'
+            note = "" if self._traffic_light_source == 'quality' \
+                else " (applies to the quality border; press 'm' to use it)"
+            print(f"🌈 quality border: {mode}{note}")
+
         # 'k' — toggle ESKF (Kalman) smoothing of the probe-pose prediction.
         def handle_toggle_filter():
             if self._guidance_pipeline is None:
@@ -445,6 +481,7 @@ class GuidanceUI:
             window.register_key_handler(';', handle_reset_camera)
             window.register_key_handler('g', handle_toggle_rotation_source)
             window.register_key_handler('m', handle_toggle_traffic_light)
+            window.register_key_handler('Shift+m', handle_toggle_continuous_border)
             window.register_key_handler('k', handle_toggle_filter)
             for _vi in range(NUM_VIEWS):
                 window.register_key_handler(str(_vi + 1), make_select_view(_vi))
@@ -722,7 +759,8 @@ class GuidanceUI:
         if self._traffic_light_source == 'quality' and quality_ok:
             score = inference_output.quality_score
             score_str = f" s={score:+.2f}" if score is not None else ""
-            text = f"TL: quality{score_str}"
+            mode_str = " [grad]" if self._traffic_light_continuous else ""
+            text = f"TL: quality{score_str}{mode_str}"
         else:
             text = "TL: legacy"
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -830,6 +868,22 @@ def main():
             "quality_score_pool_size": (
                 int(os.environ["QUALITY_SCORE_POOL_SIZE"])
                 if os.getenv("QUALITY_SCORE_POOL_SIZE") else 15
+            ),
+            # Start with the continuous-gradient border instead of discrete
+            # R/Y/G (still toggleable at runtime with 'Shift+m').
+            "quality_score_continuous": (
+                str(os.getenv("QUALITY_SCORE_CONTINUOUS", "")).strip().lower()
+                in ("1", "true", "yes", "on")
+            ),
+            # Score range the continuous gradient spans (red@min .. green@max,
+            # yellow at the midpoint). Defaults match the USGR visualizer.
+            "quality_score_score_min": (
+                float(os.environ["QUALITY_SCORE_MIN"])
+                if os.getenv("QUALITY_SCORE_MIN") else -3.0
+            ),
+            "quality_score_score_max": (
+                float(os.environ["QUALITY_SCORE_MAX"])
+                if os.getenv("QUALITY_SCORE_MAX") else 3.0
             ),
         },
         input_source=options.source,
