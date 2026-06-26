@@ -99,6 +99,11 @@ class GuidanceUI:
         # PoseTransformer) or 'legacy' (RotationPredictor). Toggled with 'g'.
         # Falls back to 'legacy' automatically when the USGR model is absent.
         self._rotation_source = 'usgr'
+        # Which model drives the traffic-light border: 'legacy' (ResNet18 pose
+        # classifier) or 'quality' (USGR ScoreTransformer). Toggled with 'm'.
+        # Defaults to 'legacy'; the quality model is opt-in and only runs while
+        # selected. Falls back to 'legacy' when the quality model is absent.
+        self._traffic_light_source = 'legacy'
     
     def initialize(self):
         """Initialize components"""
@@ -127,6 +132,29 @@ class GuidanceUI:
             probe_pose_mirror_input=bool(
                 self._env_config.get("probe_pose_mirror_input")
             ),
+            # Optional USGR quality-score ("traffic light v2") classifier.
+            # Disabled (predictor not built) when the head/backbone weights are
+            # missing. Toggled at runtime with 'm'.
+            quality_score_weights=self._env_config.get("quality_score_weights"),
+            quality_score_dino_weights=self._env_config.get("quality_score_dino_weights"),
+            quality_score_dino_model=self._env_config.get("quality_score_dino_model")
+            or "dinov3_vitl16",
+            quality_score_image_size=self._env_config.get("quality_score_image_size") or 512,
+            quality_score_num_heads=self._env_config.get("quality_score_num_heads") or 16,
+            quality_score_mirror_input=bool(
+                self._env_config.get("quality_score_mirror_input")
+            ),
+            quality_score_red_below=(
+                self._env_config["quality_score_red_below"]
+                if self._env_config.get("quality_score_red_below") is not None
+                else -1.0
+            ),
+            quality_score_green_above=(
+                self._env_config["quality_score_green_above"]
+                if self._env_config.get("quality_score_green_above") is not None
+                else 1.0
+            ),
+            quality_score_pool_size=self._env_config.get("quality_score_pool_size") or 15,
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
@@ -365,6 +393,27 @@ class GuidanceUI:
                 else " (USGR unavailable -> using legacy)"
             print(f"🔀 rotation source: {self._rotation_source}{note}")
 
+        # 'm' — toggle the traffic-light border source between the legacy
+        # ResNet18 pose classifier and the USGR quality ScoreTransformer.
+        # No-ops back to legacy (with a note) when the quality model is absent.
+        def handle_toggle_traffic_light():
+            if self._traffic_light_source == 'legacy':
+                enabled = (
+                    self._guidance_pipeline is not None
+                    and self._guidance_pipeline.set_quality_score_enabled(True)
+                )
+                if not enabled:
+                    print("⛔ quality traffic-light model unavailable "
+                          "(set QUALITY_SCORE_WEIGHTS + QUALITY_SCORE_DINO_WEIGHTS); "
+                          "staying on legacy")
+                    return
+                self._traffic_light_source = 'quality'
+            else:
+                if self._guidance_pipeline is not None:
+                    self._guidance_pipeline.set_quality_score_enabled(False)
+                self._traffic_light_source = 'legacy'
+            print(f"🚦 traffic light: {self._traffic_light_source}")
+
         # 'k' — toggle ESKF (Kalman) smoothing of the probe-pose prediction.
         def handle_toggle_filter():
             if self._guidance_pipeline is None:
@@ -395,6 +444,7 @@ class GuidanceUI:
             window.register_key_handler(']', handle_zoom_in)
             window.register_key_handler(';', handle_reset_camera)
             window.register_key_handler('g', handle_toggle_rotation_source)
+            window.register_key_handler('m', handle_toggle_traffic_light)
             window.register_key_handler('k', handle_toggle_filter)
             for _vi in range(NUM_VIEWS):
                 window.register_key_handler(str(_vi + 1), make_select_view(_vi))
@@ -508,7 +558,17 @@ class GuidanceUI:
                     inference_output.landmarks_tensor
                 )
 
-                out_frame_main_bgr = add_rgb_border_to_result(out_frame_main_bgr, inference_output.pose_classification_prediction_rgb)
+                # Traffic-light border: the legacy ResNet classifier by default,
+                # or the USGR quality model when toggled on ('m'). The quality
+                # rgb is only present while that model is enabled; fall back to
+                # legacy otherwise so the border never goes blank mid-toggle.
+                if (self._traffic_light_source == 'quality'
+                        and inference_output.quality_rgb is not None):
+                    border_rgb = inference_output.quality_rgb
+                else:
+                    border_rgb = inference_output.pose_classification_prediction_rgb
+                out_frame_main_bgr = add_rgb_border_to_result(out_frame_main_bgr, border_rgb)
+                self._draw_traffic_light_label(out_frame_main_bgr, inference_output)
 
                 if self._lvef_running:
                     result = self._guidance_pipeline.get_latest_lvef()
@@ -648,7 +708,34 @@ class GuidanceUI:
         cv2.putText(frame_bgr, text, (x, y), font, scale,
                     (0, 255, 255), thickness, cv2.LINE_AA)
 
-    
+    def _draw_traffic_light_label(self, frame_bgr: np.ndarray, inference_output) -> None:
+        """Top-left readout of the active traffic-light model (in-place).
+
+        Shows 'legacy' or 'quality'; for the quality model it also prints the
+        raw continuous score. Reflects the EFFECTIVE source -- 'quality' falls
+        back to legacy when that model is unavailable.
+        """
+        quality_ok = (
+            self._guidance_pipeline is not None
+            and self._guidance_pipeline.quality_score_available
+        )
+        if self._traffic_light_source == 'quality' and quality_ok:
+            score = inference_output.quality_score
+            score_str = f" s={score:+.2f}" if score is not None else ""
+            text = f"TL: quality{score_str}"
+        else:
+            text = "TL: legacy"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 1
+        margin = 10
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+        x = margin
+        y = margin + th
+        cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
+                    (0, 0, 0), thickness + 2, cv2.LINE_AA)
+        cv2.putText(frame_bgr, text, (x, y), font, scale,
+                    (0, 255, 255), thickness, cv2.LINE_AA)
 
 
 def main():
@@ -705,6 +792,44 @@ def main():
             "probe_pose_image_size": (
                 int(os.environ["PROBE_POSE_IMAGE_SIZE"])
                 if os.getenv("PROBE_POSE_IMAGE_SIZE") else None
+            ),
+            # USGR quality-score ("traffic light v2") classifier. Unset
+            # QUALITY_SCORE_WEIGHTS -> the model isn't built and 'm' stays on
+            # legacy. The DINOv3 backbone defaults to the same vitl16 file
+            # probe_pose uses (PROBE_POSE_DINO_WEIGHTS) unless overridden.
+            "quality_score_weights": os.getenv("QUALITY_SCORE_WEIGHTS"),
+            "quality_score_dino_weights": (
+                os.getenv("QUALITY_SCORE_DINO_WEIGHTS")
+                or os.getenv("PROBE_POSE_DINO_WEIGHTS")
+            ),
+            "quality_score_dino_model": (
+                os.getenv("QUALITY_SCORE_DINO_MODEL") or "dinov3_vitl16"
+            ),
+            "quality_score_image_size": (
+                int(os.environ["QUALITY_SCORE_IMAGE_SIZE"])
+                if os.getenv("QUALITY_SCORE_IMAGE_SIZE") else 512
+            ),
+            "quality_score_num_heads": (
+                int(os.environ["QUALITY_SCORE_NUM_HEADS"])
+                if os.getenv("QUALITY_SCORE_NUM_HEADS") else 16
+            ),
+            "quality_score_mirror_input": (
+                str(os.getenv("QUALITY_SCORE_MIRROR_INPUT", "")).strip().lower()
+                in ("1", "true", "yes", "on")
+            ),
+            "quality_score_red_below": (
+                float(os.environ["QUALITY_SCORE_RED_BELOW"])
+                if os.getenv("QUALITY_SCORE_RED_BELOW") else -1.0
+            ),
+            "quality_score_green_above": (
+                float(os.environ["QUALITY_SCORE_GREEN_ABOVE"])
+                if os.getenv("QUALITY_SCORE_GREEN_ABOVE") else 1.0
+            ),
+            # Sliding-window size for smoothing the quality score (border colour
+            # = mean of the last N scores). Larger = steadier but laggier.
+            "quality_score_pool_size": (
+                int(os.environ["QUALITY_SCORE_POOL_SIZE"])
+                if os.getenv("QUALITY_SCORE_POOL_SIZE") else 15
             ),
         },
         input_source=options.source,
