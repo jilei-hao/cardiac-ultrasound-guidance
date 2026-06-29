@@ -434,21 +434,21 @@ class GuidanceUI:
                 self._traffic_light_source = 'legacy'
             print(f"🚦 traffic light: {self._traffic_light_source}")
 
-        # 'Shift+m' — toggle the quality border between the discrete three-colour
-        # traffic light and a continuous red->yellow->green gradient. Affects the
-        # 'quality' source only (the legacy classifier has no continuous score),
-        # so it's a no-op visually until the quality border is active ('m').
+        # 'Shift+m' — toggle BOTH traffic-light borders (legacy + quality)
+        # between the discrete three-colour light and a continuous
+        # red->yellow->green gradient. Source-agnostic now that the legacy
+        # classifier also exposes a continuous score (both map through the
+        # shared inference/traffic_light scale).
         def handle_toggle_continuous_border():
             self._traffic_light_continuous = not self._traffic_light_continuous
             if self._guidance_pipeline is not None:
-                self._guidance_pipeline.set_quality_score_continuous(
+                self._guidance_pipeline.set_traffic_light_continuous(
                     self._traffic_light_continuous
                 )
             mode = 'continuous gradient' if self._traffic_light_continuous \
                 else 'discrete R/Y/G'
-            note = "" if self._traffic_light_source == 'quality' \
-                else " (applies to the quality border; press 'm' to use it)"
-            print(f"🌈 quality border: {mode}{note}")
+            print(f"🌈 traffic-light border: {mode} "
+                  f"(source: {self._traffic_light_source})")
 
         # 'k' — toggle ESKF (Kalman) smoothing of the probe-pose prediction.
         def handle_toggle_filter():

@@ -25,13 +25,11 @@ from .fourch_landmark.fourch_landmark_pipeline import (
 from .rotation.rotation_predictor import create_rotation_predictor
 from .probe_pose import create_probe_pose_predictor, ProbePosePrediction
 from .pose_classification import pose_classification
-from .pose_classification.pose_classification import PoseClassifierResultPooler
 from .quality_score import (
     create_quality_score_predictor,
     QualityScorePooler,
-    score_to_traffic_rgb,
-    score_to_continuous_rgb,
 )
+from .traffic_light import score_to_border_rgb
 from .lvef.lvef_prediction import LVEFPredictor
 
 # The EchoNet LVEF model (r2plus1d_18) is trained on 112x112 frames. The LVEF
@@ -89,12 +87,27 @@ class GuidancePipelineConfig:
     quality_score_red_below: float = -1.0
     quality_score_green_above: float = 1.0
     quality_score_pool_size: int = 15
-    # Continuous-border mode: render the quality border as a smooth
-    # red->yellow->green gradient over [score_min, score_max] instead of the
-    # three discrete colours. Off by default; toggled at runtime ('Shift+m').
-    quality_score_continuous: bool = False
     quality_score_score_min: float = -3.0
     quality_score_score_max: float = 3.0
+
+    # --- Shared traffic-light border scale (applies to BOTH sources) ---------
+    # Each source maps its raw score to a 0..1 "quality fraction" via its own
+    # [score_min, score_max] range; these shared PERCENTAGE cut-points then pick
+    # the colour, and one continuous toggle switches discrete<->gradient for
+    # whichever source is active. Defaults (1/3, 2/3) reproduce the previously
+    # hard-coded per-model thresholds. See inference/traffic_light.py.
+    traffic_light_continuous: bool = False
+    traffic_light_red_below_frac: float = 1.0 / 3.0
+    traffic_light_green_above_frac: float = 2.0 / 3.0
+    # Legacy pose-classifier raw-score range used to normalize to the 0..1
+    # scale. [-2, 1] places the default 1/3, 2/3 cut-points at the classifier's
+    # historical -1 (red) / 0 (green) raw thresholds.
+    pose_classification_score_min: float = -2.0
+    pose_classification_score_max: float = 1.0
+    pose_classification_pool_size: int = 15
+    # Deprecated alias for traffic_light_continuous (kept so existing configs
+    # that set the quality-only flag still work). Prefer traffic_light_continuous.
+    quality_score_continuous: bool = False
 
 @dataclass
 class GuidancePipelineOutput:
@@ -153,7 +166,16 @@ class GuidancePipeline:
         )
         self.__pose_classifier_model = _model
         self.__pose_classifier_preprocess = _preprocess
-        self.__pose_classifier_result_pooler = PoseClassifierResultPooler(pool_size=15, min_size=1)
+        # Continuous-score pooler for the legacy classifier, mirroring the
+        # quality pooler: average the raw score over a window, then map the
+        # smoothed value through the shared traffic_light scale (discrete or
+        # continuous). This replaces the old majority-vote-on-colours pooling so
+        # the legacy border honours the same percentage cut-points + continuous
+        # toggle as the quality border.
+        self.__pose_score_pooler = QualityScorePooler(
+            pool_size=config.pose_classification_pool_size)
+        self.__pose_score_min = config.pose_classification_score_min
+        self.__pose_score_max = config.pose_classification_score_max
 
         # Optional USGR quality-score ("traffic light v2") classifier. Built only
         # when both the head checkpoint and a DINOv3 backbone weights file are
@@ -167,11 +189,15 @@ class GuidancePipeline:
         )
         self.__quality_score_red_below = config.quality_score_red_below
         self.__quality_score_green_above = config.quality_score_green_above
-        # Continuous-gradient border mode (vs. discrete R/Y/G). Display-only;
-        # toggled at runtime via set_quality_score_continuous().
-        self.__quality_score_continuous = bool(config.quality_score_continuous)
         self.__quality_score_score_min = config.quality_score_score_min
         self.__quality_score_score_max = config.quality_score_score_max
+        # Shared continuous-gradient toggle + percentage cut-points, applied to
+        # BOTH the legacy and quality borders through inference/traffic_light.
+        # Display-only; toggled at runtime via set_traffic_light_continuous().
+        self.__traffic_light_continuous = bool(
+            config.traffic_light_continuous or config.quality_score_continuous)
+        self.__tl_red_below_frac = config.traffic_light_red_below_frac
+        self.__tl_green_above_frac = config.traffic_light_green_above_frac
         _qs_paths = (config.quality_score_weights, config.quality_score_dino_weights)
         if all(_qs_paths) and all(os.path.exists(p) for p in _qs_paths):
             self.__quality_score_predictor = create_quality_score_predictor(
@@ -255,20 +281,32 @@ class GuidancePipeline:
         return self.__quality_score_enabled
 
     @property
+    def traffic_light_continuous(self) -> bool:
+        """True when the border (either source) renders as a continuous gradient."""
+        return self.__traffic_light_continuous
+
+    def set_traffic_light_continuous(self, enabled: bool) -> bool:
+        """Switch BOTH borders between a continuous red->yellow->green gradient
+        and the discrete three-colour traffic light.
+
+        Source-agnostic and display-only (does not touch any predictor or
+        smoothing window), so it can be set regardless of which traffic-light
+        source is active or whether the quality model is loaded. Returns the
+        effective state.
+        """
+        self.__traffic_light_continuous = bool(enabled)
+        return self.__traffic_light_continuous
+
+    # Backwards-compatible aliases -- the continuous toggle is now source-agnostic
+    # (it used to be quality-only). Prefer the traffic_light_* names above.
+    @property
     def quality_score_continuous(self) -> bool:
-        """True when the quality border renders as a continuous gradient."""
-        return self.__quality_score_continuous
+        """Deprecated alias for ``traffic_light_continuous``."""
+        return self.__traffic_light_continuous
 
     def set_quality_score_continuous(self, enabled: bool) -> bool:
-        """Switch the quality border between continuous gradient and discrete.
-
-        Display-only preference (does not touch the predictor or smoothing
-        window), so it can be set regardless of whether the quality model is
-        loaded/enabled; it just has no visible effect until the quality border
-        is the active traffic-light source. Returns the effective state.
-        """
-        self.__quality_score_continuous = bool(enabled)
-        return self.__quality_score_continuous
+        """Deprecated alias for ``set_traffic_light_continuous``."""
+        return self.set_traffic_light_continuous(enabled)
 
     def classify_quality(self, frame):
         """Run the USGR quality-score classifier on a single grayscale frame.
@@ -295,16 +333,13 @@ class GuidancePipeline:
         pooled_score = self.__quality_score_pooler.get_pooled_score()
         if pooled_score is None:
             return None
-        if self.__quality_score_continuous:
-            return score_to_continuous_rgb(
-                pooled_score,
-                self.__quality_score_score_min,
-                self.__quality_score_score_max,
-            )
-        return score_to_traffic_rgb(
+        return score_to_border_rgb(
             pooled_score,
-            self.__quality_score_red_below,
-            self.__quality_score_green_above,
+            self.__quality_score_score_min,
+            self.__quality_score_score_max,
+            red_below_frac=self.__tl_red_below_frac,
+            green_above_frac=self.__tl_green_above_frac,
+            continuous=self.__traffic_light_continuous,
         )
 
     def classify(self, frame):
@@ -337,8 +372,9 @@ class GuidancePipeline:
             PoseResult: the raw per-frame classification.
         """
         pose_result = self.classify(frame)
-        # Smooth the colour for display/border stability (pooler keyed on rgb).
-        self.__pose_classifier_result_pooler.add_result(pose_result.rgb)
+        # Smooth the raw score for display/border stability; the colour is
+        # mapped from the pooled score in get_pooled_pose_rgb (shared scale).
+        self.__pose_score_pooler.add_score(pose_result.score)
         # The EchoNet LVEF model (r2plus1d_18) was trained on 112x112. Callers
         # pass the display/landmark-resolution frame (512x512 in the vigil
         # cardiac node); feeding 512 to the model collapses LVEF to a near-
@@ -371,8 +407,23 @@ class GuidancePipeline:
         return self.__lvef_buffer_fps
 
     def get_pooled_pose_rgb(self):
-        """Current smoothed (pooled) traffic-light colour, or None if empty."""
-        return self.__pose_classifier_result_pooler.get_pooled_result()
+        """Smoothed legacy traffic-light colour, or None if no frames yet.
+
+        Pools the classifier's continuous score and maps it through the shared
+        traffic_light scale, so the legacy border honours the same percentage
+        cut-points and discrete<->continuous toggle as the quality border.
+        """
+        pooled_score = self.__pose_score_pooler.get_pooled_score()
+        if pooled_score is None:
+            return None
+        return score_to_border_rgb(
+            pooled_score,
+            self.__pose_score_min,
+            self.__pose_score_max,
+            red_below_frac=self.__tl_red_below_frac,
+            green_above_frac=self.__tl_green_above_frac,
+            continuous=self.__traffic_light_continuous,
+        )
 
     def predict_landmarks(self, frame):
         """4-chamber landmark detection. Returns (cla, landmarks_tensor)."""
