@@ -2303,7 +2303,6 @@ class GuidanceWidgetRenderer3D:
         256/512/640 window sizes the widget is instantiated at.
         """
         H, W = frame_bgra.shape[:2]
-        has_alpha = frame_bgra.shape[2] == 4
 
         # --- geometry (all proportional to frame size) ---
         pad = max(6, int(round(H * 0.022)))       # inner panel padding
@@ -2342,24 +2341,10 @@ class GuidanceWidgetRenderer3D:
         label_w = max(_text_size(t)[0] for t in labels)
 
         n = len(_AXIS_ORDER)
-        grid_w = n * swatch_w + (n - 1) * col_gap
-        panel_w = pad * 2 + label_w + label_gap + grid_w
-        panel_h = pad * 2 + 2 * row_h
         x0, y0 = margin, margin
-        x1 = min(x0 + panel_w, W)
-        y1 = min(y0 + panel_h, H)
 
-        # --- scrim: manual alpha blend so it works whether or not the frame's
-        # own alpha channel is honoured downstream (ROS publish vs Qt) ---
-        roi = frame_bgra[y0:y1, x0:x1]
-        scrim = np.array([28, 26, 24], dtype=np.float32)  # near-black BGR
-        a = 0.58
-        roi[..., :3] = (
-            roi[..., :3] * (1.0 - a) + scrim * a
-        ).astype(np.uint8)
-        if has_alpha:
-            roi[..., 3] = 255
-
+        # Transparent background: labels + swatches are drawn straight onto the
+        # rendered scene (no scrim panel), so the 3D widget shows through.
         grid_x0 = x0 + pad + label_w + label_gap
         col_x = [grid_x0 + i * (swatch_w + col_gap) for i in range(n)]
 
