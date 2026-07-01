@@ -9,7 +9,6 @@ import numpy as np
 import trimesh
 import time
 import cv2
-from ..image_helpers import overlay_color_legend
 from scipy.spatial.transform import Rotation as R
 from typing import Optional, Union
 
@@ -59,6 +58,115 @@ _ROLL_AXES = {
     "ccw": np.array([ 1.0, 0.0, 0.0]),
     "cw":  np.array([-1.0, 0.0, 0.0]),
 }
+
+
+# Coordinate-axis base colours (RGB, 0-1). Single source of truth shared by the
+# 3D axis materials (``_create_materials``) and the 2D on-frame legend
+# (``_draw_guidance_legend``), so a legend swatch can never drift from the axis
+# it labels. Tuple order is the on-screen / legend column order.
+_AXIS_ORDER = ("x", "y", "z")
+_AXIS_RGB = {
+    "x": (1.0, 0.2, 0.2),   # red   — probe long axis
+    "y": (0.2, 1.0, 0.2),   # green — perpendicular plane (lateral)
+    "z": (0.2, 0.2, 1.0),   # blue  — perpendicular plane (back-of-probe)
+}
+# Opacity of the semi-transparent "predicted" axes (BLEND alpha).
+_PREDICTED_AXIS_ALPHA = 0.3
+
+
+# Legend label font, tried in order. Labels render as real anti-aliased
+# TrueType via PIL instead of the technical-looking cv2 Hershey stroke font —
+# the target users are clinicians, not engineers. The primary is Quicksand, a
+# rounded geometric sans chosen for a friendly, non-technical look (Bold reads
+# best against the dark panel at small sizes). The fallbacks mirror the
+# vigil-system guidance *display* font stack (Inter, "Segoe UI", Arial,
+# sans-serif — see display/vigil_display_utils/Style.py & GuidanceWidget.py), so
+# where Quicksand is unavailable the legend still matches the operator UI: Inter
+# (the house font), else the Arial substitute (Liberation Sans), else the
+# generic sans (DejaVu). If nothing resolves, the legend falls back to the cv2
+# Hershey font so rendering never breaks. Override with the GUIDANCE_LEGEND_FONT
+# env var (absolute font path).
+_LEGEND_FONT_CANDIDATES = (
+    os.environ.get("GUIDANCE_LEGEND_FONT", ""),
+    # Quicksand — friendly rounded primary.
+    "/usr/share/fonts/truetype/quicksand/Quicksand-Bold.ttf",
+    "/usr/share/fonts/truetype/quicksand/Quicksand-Medium.ttf",
+    "Quicksand-Bold.ttf",
+    # Inter (vigil house font). Per-user install dirs first (no sudo needed),
+    # then the system paths a `fonts-inter` apt install would use.
+    os.path.expanduser("~/.local/share/fonts/inter/Inter-Regular.otf"),
+    os.path.expanduser("~/.fonts/inter/Inter-Regular.otf"),
+    "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+    "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
+    "/usr/share/fonts/truetype/inter/InterVariable.ttf",
+    "Inter-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # ~Arial
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    "LiberationSans-Regular.ttf",
+    "Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",               # macOS
+    "C:\\Windows\\Fonts\\arial.ttf",                      # Windows
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",   # generic sans fallback
+    "DejaVuSans.ttf",
+)
+# (font_path, size) -> PIL ImageFont | None. Module-level so it is shared and
+# survives across renderer instances; loading a TrueType face is not free.
+_FONT_CACHE: dict = {}
+
+
+def _load_legend_font(size_px: int):
+    """Return a PIL ImageFont near ``size_px``, or None if none resolve."""
+    size = max(8, int(size_px))
+    for cand in _LEGEND_FONT_CANDIDATES:
+        if not cand:
+            continue
+        key = (cand, size)
+        if key not in _FONT_CACHE:
+            try:
+                from PIL import ImageFont
+                _FONT_CACHE[key] = ImageFont.truetype(cand, size)
+            except Exception:
+                _FONT_CACHE[key] = None
+        if _FONT_CACHE[key] is not None:
+            return _FONT_CACHE[key]
+    return None
+
+
+def _alpha_blit_rgba(frame_bgra: np.ndarray, sprite_rgba: np.ndarray,
+                     x: int, y: int) -> None:
+    """Alpha-composite an RGBA sprite onto a BGRA frame at (x, y)."""
+    fh, fw = frame_bgra.shape[:2]
+    sh, sw = sprite_rgba.shape[:2]
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(fw, x + sw), min(fh, y + sh)
+    if x1 <= x0 or y1 <= y0:
+        return
+    sprite = sprite_rgba[y0 - y:y1 - y, x0 - x:x1 - x]
+    a = sprite[..., 3:4].astype(np.float32) / 255.0
+    src_bgr = sprite[..., 2::-1].astype(np.float32)   # RGB -> BGR
+    roi = frame_bgra[y0:y1, x0:x1]
+    roi[..., :3] = (
+        src_bgr * a + roi[..., :3].astype(np.float32) * (1.0 - a)
+    ).astype(np.uint8)
+    if frame_bgra.shape[2] == 4:
+        roi[..., 3] = np.maximum(roi[..., 3], sprite[..., 3])
+
+
+def _blit_pil_text(frame_bgra: np.ndarray, text: str, x: int, y: int,
+                   font, color_bgr: tuple) -> None:
+    """Draw ``text`` (TrueType, anti-aliased) with its visual top-left at
+    (x, y) onto the BGRA frame."""
+    from PIL import Image, ImageDraw
+    left, top, right, bottom = font.getbbox(text)
+    tw, th = right - left, bottom - top
+    if tw <= 0 or th <= 0:
+        return
+    img = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text(
+        (-left, -top), text, font=font,
+        fill=(color_bgr[2], color_bgr[1], color_bgr[0], 255),
+    )
+    _alpha_blit_rgba(frame_bgra, np.asarray(img), int(x), int(y))
 
 
 class GuidanceWidgetRenderer3D:
@@ -384,7 +492,13 @@ class GuidanceWidgetRenderer3D:
         self.calibration_head_dir_world = None   # tip-points-to (patient superior)
         self.calibration_up_world = None         # button-up (patient anterior)
 
-        self.legend_image_bgra = cv2.imread(self.legend_image_path, cv2.IMREAD_UNCHANGED)
+        # The legend is now drawn programmatically at the frame's native
+        # resolution (see ``_draw_guidance_legend``) instead of being resampled
+        # from a baked PNG — the down-then-up scaling of that PNG was what made
+        # it look voxelized. A non-empty ``legend_image_path`` still acts purely
+        # as the on/off switch so existing callers / env vars keep working; the
+        # file itself is no longer read.
+        self._legend_enabled = bool(self.legend_image_path)
 
         # Per-stage wall-clock for the last render_widget call, in ms.
         # Populated only when timing_enabled is True.
@@ -642,36 +756,37 @@ class GuidanceWidgetRenderer3D:
                 metallicFactor=0.5,
                 roughnessFactor=0.5
             ),
+            # Solid current-pose axes (colours from the shared _AXIS_RGB).
             'x': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[1.0, 0.2, 0.2, 1.0],  # Bright red
+                baseColorFactor=[*_AXIS_RGB['x'], 1.0],
                 metallicFactor=0.3,
                 roughnessFactor=0.6
             ),
             'y': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.2, 1.0, 0.2, 1.0],  # Bright green
+                baseColorFactor=[*_AXIS_RGB['y'], 1.0],
                 metallicFactor=0.3,
                 roughnessFactor=0.6
             ),
             'z': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.2, 0.2, 1.0, 1.0],  # Bright blue
+                baseColorFactor=[*_AXIS_RGB['z'], 1.0],
                 metallicFactor=0.3,
                 roughnessFactor=0.6
             ),
-            # Semi-transparent versions for predicted axes
+            # Semi-transparent versions for predicted axes (same hues, low alpha).
             'x_predicted': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[1.0, 0.2, 0.2, 0.3],  # Bright red, 30% opacity
+                baseColorFactor=[*_AXIS_RGB['x'], _PREDICTED_AXIS_ALPHA],
                 metallicFactor=0.3,
                 roughnessFactor=0.6,
                 alphaMode='BLEND'
             ),
             'y_predicted': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.2, 1.0, 0.2, 0.3],  # Bright green, 30% opacity
+                baseColorFactor=[*_AXIS_RGB['y'], _PREDICTED_AXIS_ALPHA],
                 metallicFactor=0.3,
                 roughnessFactor=0.6,
                 alphaMode='BLEND'
             ),
             'z_predicted': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.2, 0.2, 1.0, 0.3],  # Bright blue, 30% opacity
+                baseColorFactor=[*_AXIS_RGB['z'], _PREDICTED_AXIS_ALPHA],
                 metallicFactor=0.3,
                 roughnessFactor=0.6,
                 alphaMode='BLEND'
@@ -2119,11 +2234,9 @@ class GuidanceWidgetRenderer3D:
         # so it has no referent once those axes are hidden — and the 'x'
         # hotkey toggles current + predicted axes together, so dropping
         # the legend with them keeps the widget uncluttered.
-        if (self.legend_image_bgra is not None
-                and self._layers_visible["predicted_axes"]):
-            output_frame = overlay_color_legend(rendered_frame_bgra, self.legend_image_bgra, top=10, left=10, pct_width=0.5)
-        else:
-            output_frame = rendered_frame_bgra
+        if self._legend_enabled and self._layers_visible["predicted_axes"]:
+            self._draw_guidance_legend(rendered_frame_bgra)
+        output_frame = rendered_frame_bgra
 
         # Handle different render modes
         if self.render_mode == 'overlay' and input_frame_bgr is not None:
@@ -2141,7 +2254,132 @@ class GuidanceWidgetRenderer3D:
             }
 
         return result
-    
+
+    @staticmethod
+    def _axis_bgra(axis: str) -> tuple:
+        """Return the BGRA (uint8, opaque) legend colour for an axis."""
+        r, g, b = _AXIS_RGB[axis]
+        return (int(b * 255), int(g * 255), int(r * 255), 255)
+
+    @staticmethod
+    def _draw_dashed_bar(frame: np.ndarray, x: int, y: int, w: int, h: int,
+                         color: tuple) -> None:
+        """Draw a horizontal dashed bar (filled dashes + gaps) in ``frame``.
+
+        Used for the "Predicted" legend row: a dashed swatch reads as
+        "predicted / not-yet-there" far more legibly than the old faded
+        translucent block, while staying crisp (it's a static key, so the
+        dash-shimmer that rules dashes out for the live 3D axes never applies).
+
+        Fixed at three dashes with an airy gap so the "predicted" cue stays
+        unambiguous rather than reading as a near-solid bar.
+        """
+        n_dashes = 3
+        gap_ratio = 0.975   # gap as a fraction of dash length (>0.5 = airier)
+        dash = max(2, int(round(w / (n_dashes + (n_dashes - 1) * gap_ratio))))
+        gap = max(2, int(round(dash * gap_ratio)))
+        cx = x
+        for _ in range(n_dashes):
+            seg = min(dash, x + w - cx)
+            if seg <= 0:
+                break
+            cv2.rectangle(frame, (cx, y), (cx + seg, y + h), color, -1,
+                          cv2.LINE_AA)
+            cx += dash + gap
+
+    def _draw_guidance_legend(self, frame_bgra: np.ndarray) -> None:
+        """Draw the axis legend directly onto the BGRA widget frame.
+
+        Vector-drawn at the frame's native resolution (no baked-PNG resample),
+        with swatch colours pulled from the same ``_AXIS_RGB`` constants that
+        drive the 3D axis materials — so the key can never drift from the axes.
+
+        Two labelled rows, one swatch per axis colour:
+          * "Current" — solid bars  → the opaque current-pose axes.
+          * "Target"  — dashed bars → the translucent predicted-pose axes.
+        Labels use a friendly TrueType font (see ``_load_legend_font``) so the
+        legend reads as a clinical UI, not an engineering plot. All geometry is
+        proportional to frame size so it stays consistent across the
+        256/512/640 window sizes the widget is instantiated at.
+        """
+        H, W = frame_bgra.shape[:2]
+        has_alpha = frame_bgra.shape[2] == 4
+
+        # --- geometry (all proportional to frame size) ---
+        pad = max(6, int(round(H * 0.022)))       # inner panel padding
+        margin = max(8, int(round(H * 0.03)))     # gap from the frame corner
+        row_h = max(12, int(round(H * 0.06)))     # per data-row height
+        swatch_w = max(24, int(round(W * 0.06)))  # swatch length (1.2x)
+        swatch_h = max(4, int(round(H * 0.017)))  # swatch thickness
+        col_gap = max(4, int(round(W * 0.012)))   # gap between swatches
+        label_gap = max(6, int(round(W * 0.018)))  # gap label->grid
+
+        # Friendly TrueType label font; fall back to cv2 Hershey if none load.
+        pil_font = _load_legend_font(max(11, int(round(H * 0.045))))
+        cv_scale = max(0.34, H * 0.0011)
+        cv_thick = max(1, int(round(H * 0.0028)))
+        text_col = (238, 238, 238)   # BGR
+
+        def _text_size(text: str) -> tuple:
+            if pil_font is not None:
+                left, top, right, bottom = pil_font.getbbox(text)
+                return right - left, bottom - top
+            (tw, th), _ = cv2.getTextSize(
+                text, cv2.FONT_HERSHEY_DUPLEX, cv_scale, cv_thick)
+            return tw, th
+
+        def _draw_label(text: str, x: int, cy: int) -> None:
+            _tw, th = _text_size(text)
+            if pil_font is not None:
+                _blit_pil_text(frame_bgra, text, x, cy - th // 2,
+                               pil_font, text_col)
+            else:
+                cv2.putText(frame_bgra, text, (x, cy + th // 2),
+                            cv2.FONT_HERSHEY_DUPLEX, cv_scale,
+                            (*text_col, 255), cv_thick, cv2.LINE_AA)
+
+        labels = ("Current", "Target")
+        label_w = max(_text_size(t)[0] for t in labels)
+
+        n = len(_AXIS_ORDER)
+        grid_w = n * swatch_w + (n - 1) * col_gap
+        panel_w = pad * 2 + label_w + label_gap + grid_w
+        panel_h = pad * 2 + 2 * row_h
+        x0, y0 = margin, margin
+        x1 = min(x0 + panel_w, W)
+        y1 = min(y0 + panel_h, H)
+
+        # --- scrim: manual alpha blend so it works whether or not the frame's
+        # own alpha channel is honoured downstream (ROS publish vs Qt) ---
+        roi = frame_bgra[y0:y1, x0:x1]
+        scrim = np.array([28, 26, 24], dtype=np.float32)  # near-black BGR
+        a = 0.58
+        roi[..., :3] = (
+            roi[..., :3] * (1.0 - a) + scrim * a
+        ).astype(np.uint8)
+        if has_alpha:
+            roi[..., 3] = 255
+
+        grid_x0 = x0 + pad + label_w + label_gap
+        col_x = [grid_x0 + i * (swatch_w + col_gap) for i in range(n)]
+
+        # --- two data rows: solid (current) then dashed (target) ---
+        row_top = y0 + pad
+        for r, label in enumerate(labels):
+            cy = row_top + r * row_h + row_h // 2
+            _draw_label(label, x0 + pad, cy)
+            dashed = (r == 1)
+            for i, ax in enumerate(_AXIS_ORDER):
+                color = self._axis_bgra(ax)
+                sx, sy = col_x[i], cy - swatch_h // 2
+                if dashed:
+                    self._draw_dashed_bar(frame_bgra, sx, sy, swatch_w,
+                                          swatch_h, color)
+                else:
+                    cv2.rectangle(frame_bgra, (sx, sy),
+                                  (sx + swatch_w, sy + swatch_h), color, -1,
+                                  cv2.LINE_AA)
+
     def _overlay_on_frame(self, widget_frame: np.ndarray, input_frame: np.ndarray) -> np.ndarray:
         """Overlay the 3D widget on an input frame."""
         # Simple overlay in top-left corner (can be enhanced)
