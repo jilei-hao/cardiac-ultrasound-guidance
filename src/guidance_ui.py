@@ -160,6 +160,10 @@ class GuidanceUI:
                 if self._env_config.get("quality_score_green_above") is not None
                 else 1.0
             ),
+            # Unified border-smoothing window for whichever source is active
+            # (None -> per-source fallback below). Prefer this over the
+            # deprecated per-source *_pool_size.
+            traffic_light_pool_size=self._env_config.get("traffic_light_pool_size"),
             quality_score_pool_size=self._env_config.get("quality_score_pool_size") or 15,
             # Continuous-gradient border mode (toggled at runtime with 'Shift+m').
             quality_score_continuous=bool(
@@ -868,8 +872,15 @@ def main():
                 float(os.environ["QUALITY_SCORE_GREEN_ABOVE"])
                 if os.getenv("QUALITY_SCORE_GREEN_ABOVE") else 1.0
             ),
-            # Sliding-window size for smoothing the quality score (border colour
-            # = mean of the last N scores). Larger = steadier but laggier.
+            # Unified border-smoothing window (frames) for whichever traffic-
+            # light source is active: border = mean of the last N scores. One
+            # knob drives both sources. Larger = steadier but laggier. Unset ->
+            # per-source fallback (QUALITY_SCORE_POOL_SIZE below).
+            "traffic_light_pool_size": (
+                int(os.environ["TRAFFIC_LIGHT_POOL_SIZE"])
+                if os.getenv("TRAFFIC_LIGHT_POOL_SIZE") else None
+            ),
+            # Deprecated per-source alias; prefer TRAFFIC_LIGHT_POOL_SIZE.
             "quality_score_pool_size": (
                 int(os.environ["QUALITY_SCORE_POOL_SIZE"])
                 if os.getenv("QUALITY_SCORE_POOL_SIZE") else 15

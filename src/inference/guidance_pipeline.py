@@ -86,6 +86,8 @@ class GuidancePipelineConfig:
     # green_above <= green). Used only in DISCRETE border mode.
     quality_score_red_below: float = -1.0
     quality_score_green_above: float = 1.0
+    # Deprecated: prefer the unified traffic_light_pool_size. Kept as a
+    # per-source fallback for pre-unification configs.
     quality_score_pool_size: int = 15
     quality_score_score_min: float = -3.0
     quality_score_score_max: float = 3.0
@@ -108,11 +110,19 @@ class GuidancePipelineConfig:
     traffic_light_continuous: bool = False
     traffic_light_red_below_frac: float = 1.0 / 3.0
     traffic_light_green_above_frac: float = 2.0 / 3.0
+    # Unified border-smoothing window (frames) for whichever source is active:
+    # the border colour is the mean of the last N per-frame scores (moving
+    # average). One knob drives BOTH poolers, so it follows the active source.
+    # None -> fall back to the per-source *_pool_size aliases below (pre-
+    # unification behaviour). Set (e.g. in config) -> wins for both sources.
+    traffic_light_pool_size: Optional[int] = None
     # Legacy pose-classifier raw-score range used to normalize to the 0..1
     # scale. [-2, 1] places the default 1/3, 2/3 cut-points at the classifier's
     # historical -1 (red) / 0 (green) raw thresholds.
     pose_classification_score_min: float = -2.0
     pose_classification_score_max: float = 1.0
+    # Deprecated: prefer the unified traffic_light_pool_size. Kept as a
+    # per-source fallback for pre-unification configs.
     pose_classification_pool_size: int = 15
     # Deprecated alias for traffic_light_continuous (kept so existing configs
     # that set the quality-only flag still work). Prefer traffic_light_continuous.
@@ -176,14 +186,19 @@ class GuidancePipeline:
         )
         self.__pose_classifier_model = _model
         self.__pose_classifier_preprocess = _preprocess
+        # Border-smoothing window: one unified traffic_light_pool_size drives
+        # BOTH poolers (so it follows whichever source is toggled on); when it's
+        # None, fall back to each source's deprecated per-source *_pool_size.
+        _tl_pool = config.traffic_light_pool_size
+        _pose_pool = _tl_pool if _tl_pool is not None else config.pose_classification_pool_size
+        _quality_pool = _tl_pool if _tl_pool is not None else config.quality_score_pool_size
         # Continuous-score pooler for the legacy classifier, mirroring the
         # quality pooler: average the raw score over a window, then map the
         # smoothed value through the shared traffic_light scale (discrete or
         # continuous). This replaces the old majority-vote-on-colours pooling so
         # the legacy border honours the same percentage cut-points + continuous
         # toggle as the quality border.
-        self.__pose_score_pooler = QualityScorePooler(
-            pool_size=config.pose_classification_pool_size)
+        self.__pose_score_pooler = QualityScorePooler(pool_size=_pose_pool)
         self.__pose_score_min = config.pose_classification_score_min
         self.__pose_score_max = config.pose_classification_score_max
 
@@ -194,9 +209,7 @@ class GuidancePipeline:
         # set_quality_score_enabled(True) -- the consumer toggles it at runtime.
         self.__quality_score_predictor = None
         self.__quality_score_enabled = False
-        self.__quality_score_pooler = QualityScorePooler(
-            pool_size=config.quality_score_pool_size
-        )
+        self.__quality_score_pooler = QualityScorePooler(pool_size=_quality_pool)
         self.__quality_score_red_below = config.quality_score_red_below
         self.__quality_score_green_above = config.quality_score_green_above
         self.__quality_score_score_min = config.quality_score_score_min
