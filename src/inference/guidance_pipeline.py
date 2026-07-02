@@ -90,6 +90,15 @@ class GuidancePipelineConfig:
     quality_score_score_min: float = -3.0
     quality_score_score_max: float = 3.0
 
+    # Run BOTH USGR predictors' forwards (probe_pose + quality) under
+    # torch.autocast(cuda, fp16): ~2.25x faster (32.9 -> 14.6 ms per ViT-L/16
+    # @ 512 forward on a 4090) with no meaningful output change — validated on
+    # 2,090 recorded frames (projects/usgr_integration/fp16_parity_test.py in
+    # vigil-developer): quality |dScore| p95 = 0.007 on a 2.0 threshold span
+    # with zero colour flips; probe raw rotation delta p95 = 0.6 deg vs the
+    # model's ~5 deg converged error. CUDA-only; ignored on CPU.
+    usgr_autocast_fp16: bool = False
+
     # --- Shared traffic-light border scale (applies to BOTH sources) ---------
     # Each source maps its raw score to a 0..1 "quality fraction" via its own
     # [score_min, score_max] range; these shared PERCENTAGE cut-points then pick
@@ -156,6 +165,7 @@ class GuidancePipeline:
                 dino_model=config.probe_pose_dino_model,
                 image_size=config.probe_pose_image_size,
                 mirror_input=config.probe_pose_mirror_input,
+                autocast_fp16=config.usgr_autocast_fp16,
             )
         else:
             print("[GuidancePipeline] Probe-pose assets not found; standard-view "
@@ -210,6 +220,7 @@ class GuidancePipeline:
                 red_below=config.quality_score_red_below,
                 green_above=config.quality_score_green_above,
                 mirror_input=config.quality_score_mirror_input,
+                autocast_fp16=config.usgr_autocast_fp16,
             )
         else:
             print("[GuidancePipeline] Quality-score assets not found; the "

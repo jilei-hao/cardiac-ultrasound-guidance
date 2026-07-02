@@ -41,6 +41,7 @@ DINOv3 backbone weights file (the same ``dinov3_vitl16`` file probe_pose uses).
 from collections import deque
 from dataclasses import dataclass
 import os
+import contextlib
 from typing import Optional
 
 import cv2
@@ -264,6 +265,12 @@ class QualityScorePredictor:
         # by default -- enable only if the score is clearly inverted on live
         # data (see probe_pose's mirror_input note).
         mirror_input: bool = False,
+        # Run the forward under torch.autocast(cuda, fp16): ~2.25x faster
+        # (32.9 -> 14.6 ms per ViT-L/16 @ 512 forward on a 4090) with no
+        # meaningful score change (fp16_parity_test.py, 2,090 recorded frames:
+        # |dScore| p95 = 0.007 on a 2.0 threshold span, zero colour flips).
+        # CUDA-only; ignored on CPU.
+        autocast_fp16: bool = False,
     ):
         self.device = device
         self.checkpoint_path = checkpoint_path
@@ -276,6 +283,7 @@ class QualityScorePredictor:
         self.red_below = red_below
         self.green_above = green_above
         self.mirror_input = mirror_input
+        self.autocast_fp16 = autocast_fp16
         self.model = None
 
         # Reuse the dinov3 hub bundled at src/inference/dinov3 (same as
@@ -342,6 +350,12 @@ class QualityScorePredictor:
             print(f"❌ [Quality] Failed to load quality-score predictor: {e}")
             self.model = None
 
+    def _autocast_ctx(self):
+        """fp16 autocast context when enabled (CUDA device only), else a no-op."""
+        if self.autocast_fp16 and str(self.device).startswith("cuda"):
+            return torch.autocast("cuda", dtype=torch.float16)
+        return contextlib.nullcontext()
+
     @torch.no_grad()
     def predict(self, frame: np.ndarray) -> Optional[QualityResult]:
         """Predict the quality score for a single frame.
@@ -362,7 +376,9 @@ class QualityScorePredictor:
                 frame = cv2.flip(frame, 1)
 
             image_tensor = preprocess_frame_for_model(frame).to(self.device)
-            score = float(self.model(image_tensor).detach().cpu().reshape(-1)[0])
+            with self._autocast_ctx():
+                out = self.model(image_tensor)
+            score = float(out.detach().float().cpu().reshape(-1)[0])
             rgb = score_to_traffic_rgb(score, self.red_below, self.green_above)
             return QualityResult(score=score, rgb=rgb)
 

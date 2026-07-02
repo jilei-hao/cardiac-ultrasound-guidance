@@ -16,6 +16,7 @@ The DINOv3 backbone is loaded from the dinov3 hub already bundled at
 ``src/inference/dinov3/`` -- the same repo the rotation predictor uses.
 """
 
+import contextlib
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -152,6 +153,13 @@ class ProbePosePredictor:
         mirror_input: bool = False,
         use_filter: bool = True,
         filter_kwargs: Optional[dict] = None,
+        # Run the forward under torch.autocast(cuda, fp16): ~2.25x faster
+        # (32.9 -> 14.6 ms per ViT-L/16 @ 512 forward on a 4090) with no
+        # meaningful pose change (fp16_parity_test.py, 2,090 recorded frames:
+        # raw rotation delta p95 = 0.6 deg vs the model's ~5 deg converged
+        # error; |dT| p95 = 0.3 mm; the ESKF smooths the residual jitter).
+        # CUDA-only; ignored on CPU.
+        autocast_fp16: bool = False,
     ):
         self.device = device
         self.checkpoint_path = checkpoint_path
@@ -164,6 +172,7 @@ class ProbePosePredictor:
         self.image_size = image_size
         self.conditioning_dim = conditioning_dim
         self.mirror_input = mirror_input
+        self.autocast_fp16 = autocast_fp16
         self.model = None
         self.normalizer = None
 
@@ -257,6 +266,12 @@ class ProbePosePredictor:
         self.use_filter = bool(enabled)
         self.reset_filter()
 
+    def _autocast_ctx(self):
+        """fp16 autocast context when enabled (CUDA device only), else a no-op."""
+        if self.autocast_fp16 and str(self.device).startswith("cuda"):
+            return torch.autocast("cuda", dtype=torch.float16)
+        return contextlib.nullcontext()
+
     @torch.no_grad()
     def predict(self, frame: np.ndarray, view_idx: int = 0,
                 timestamp: Optional[float] = None) -> Optional[ProbePosePrediction]:
@@ -292,7 +307,8 @@ class ProbePosePredictor:
             onehot[view_idx] = 1.0
             onehot = onehot.unsqueeze(0).to(self.device)  # [1, conditioning_dim]
 
-            pose = self.model(image_tensor, onehot)               # [1, 12] normalized
+            with self._autocast_ctx():
+                pose = self.model(image_tensor, onehot)           # [1, 12] normalized
             pose = self.normalizer.denormalize(pose)[0]            # [12] metric scale
             pose = pose.float().cpu().numpy()
 

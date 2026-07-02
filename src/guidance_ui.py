@@ -175,6 +175,11 @@ class GuidanceUI:
                 if self._env_config.get("quality_score_score_max") is not None
                 else 3.0
             ),
+            # fp16 autocast for both USGR ViT-L forwards (~2.25x; parity
+            # validated — see GuidancePipelineConfig.usgr_autocast_fp16).
+            usgr_autocast_fp16=bool(
+                self._env_config.get("usgr_autocast_fp16")
+            ),
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
@@ -884,6 +889,12 @@ def main():
             "quality_score_score_max": (
                 float(os.environ["QUALITY_SCORE_MAX"])
                 if os.getenv("QUALITY_SCORE_MAX") else 3.0
+            ),
+            # Run both USGR ViT-L forwards (probe_pose + quality) under fp16
+            # autocast (~2.25x faster, parity-validated). Truthy strings only.
+            "usgr_autocast_fp16": (
+                str(os.getenv("USGR_AUTOCAST_FP16", "")).strip().lower()
+                in ("1", "true", "yes", "on")
             ),
         },
         input_source=options.source,
