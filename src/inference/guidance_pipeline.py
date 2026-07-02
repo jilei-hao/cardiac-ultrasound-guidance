@@ -370,8 +370,29 @@ class GuidancePipeline:
             self.__pose_classifier_preprocess
         )
 
+    def _buffer_frame(self, frame, pose_result):
+        """Push (frame, per-frame result) to the LVEF buffer + bump the meter.
+
+        Shared by the legacy and quality fast paths so the LVEF buffer is
+        filled by exactly ONE traffic-light classification per frame, whichever
+        source is active.
+
+        The EchoNet LVEF model (r2plus1d_18) was trained on 112x112. Callers
+        pass the display/landmark-resolution frame (512x512 in the vigil
+        cardiac node); feeding 512 to the model collapses LVEF to a near-
+        constant (~48), destroying per-clip discrimination. Resize to 112 for
+        the LVEF buffer only (classification/display keep their own sizes). The
+        buffer keeps the RAW per-frame result so the LVEF gate + diagnostics
+        see exactly what was classified each frame.
+        """
+        lvef_frame = cv2.resize(frame, (LVEF_INPUT_SIZE, LVEF_INPUT_SIZE),
+                                interpolation=cv2.INTER_AREA)
+        frame_rgb = cv2.cvtColor(lvef_frame, cv2.COLOR_GRAY2RGB)
+        self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_result)
+        self.__update_lvef_buffer_fps()
+
     def classify_and_buffer(self, frame):
-        """Fast path: classify the frame and push it to the LVEF buffer.
+        """Fast path (legacy source): classify the frame and buffer it.
 
         Intentionally minimal so callers can run it on the critical per-frame
         path without waiting for landmark/rotation/probe-pose. The RAW
@@ -386,18 +407,37 @@ class GuidancePipeline:
         # Smooth the raw score for display/border stability; the colour is
         # mapped from the pooled score in get_pooled_pose_rgb (shared scale).
         self.__pose_score_pooler.add_score(pose_result.score)
-        # The EchoNet LVEF model (r2plus1d_18) was trained on 112x112. Callers
-        # pass the display/landmark-resolution frame (512x512 in the vigil
-        # cardiac node); feeding 512 to the model collapses LVEF to a near-
-        # constant (~48), destroying per-clip discrimination. Resize to 112 for
-        # the LVEF buffer only (classification/display keep their own sizes).
-        lvef_frame = cv2.resize(frame, (LVEF_INPUT_SIZE, LVEF_INPUT_SIZE),
-                                interpolation=cv2.INTER_AREA)
-        # Buffer keeps the RAW per-frame result so the LVEF model and any
-        # diagnostics see exactly what was classified each frame.
-        frame_rgb = cv2.cvtColor(lvef_frame, cv2.COLOR_GRAY2RGB)
-        self.__lvef_predictor.add_frame_to_buffer(frame_rgb, pose_result)
-        self.__update_lvef_buffer_fps()
+        self._buffer_frame(frame, pose_result)
+        return pose_result
+
+    def classify_quality_and_buffer(self, frame):
+        """Fast path (USGR source): ONE quality forward feeds gate + border.
+
+        Runs the USGR quality classifier a single time, pushes the frame + its
+        per-frame result to the LVEF buffer (so the LVEF gate uses the quality
+        traffic light), and updates the quality pooler (so the border reads the
+        same run via ``get_pooled_quality_rgb`` / ``get_pooled_border_rgb``).
+        This replaces the previous split where the legacy classifier fed the
+        LVEF buffer while a separate quality forward drove only the border.
+
+        Falls back to the legacy ``classify_and_buffer`` when the quality
+        classifier is unavailable or off, so the LVEF buffer is always fed.
+
+        Returns:
+            PoseResult: the raw per-frame classification (quality-derived).
+        """
+        if not self.quality_score_enabled:
+            return self.classify_and_buffer(frame)
+        qres = self.__quality_score_predictor.predict(frame)
+        if qres is None:
+            return self.classify_and_buffer(frame)
+        self.__quality_score_pooler.add_score(qres.score)
+        # Store the quality result on the buffer's per-frame PoseResult. rgb is
+        # the DISCRETE traffic-light colour (score_to_traffic_rgb, red_below/
+        # green_above) that is.video_good counts; the pooled/continuous border
+        # is derived separately from the pooled score.
+        pose_result = pose_classification.PoseResult(score=qres.score, rgb=qres.rgb)
+        self._buffer_frame(frame, pose_result)
         return pose_result
 
     def __update_lvef_buffer_fps(self):
@@ -435,6 +475,18 @@ class GuidancePipeline:
             green_above_frac=self.__tl_green_above_frac,
             continuous=self.__traffic_light_continuous,
         )
+
+    def get_pooled_border_rgb(self):
+        """Pooled traffic-light border for the ACTIVE source.
+
+        Single source of truth so callers don't branch on the traffic-light
+        source: the quality pooler when the USGR classifier is enabled, else
+        the legacy pose pooler. Both go through the shared traffic_light scale
+        (same cut-points + discrete/continuous toggle).
+        """
+        if self.quality_score_enabled:
+            return self.get_pooled_quality_rgb()
+        return self.get_pooled_pose_rgb()
 
     def predict_landmarks(self, frame):
         """4-chamber landmark detection. Returns (cla, landmarks_tensor)."""
