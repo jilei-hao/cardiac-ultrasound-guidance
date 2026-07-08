@@ -39,6 +39,15 @@ DEFAULT_FILTER_KWARGS = dict(
     sigma_vel=0.02,
     sigma_meas_rot=0.1,
     sigma_meas_trans=0.05,
+    # No two-point velocity bootstrap: the filter is reset on every view
+    # switch, exactly when raw predictions jitter most, and differencing two
+    # noisy poses ~62 ms apart amplifies that noise (~2/dt^2) into a huge
+    # twist that the low sigma_vel then clings to for seconds -- the "target
+    # probe swings wildly after switching views" bug (worse when degenerate
+    # frames coast on it, measurement-free). Velocity is instead learned
+    # through updates (init P_vel=1.0 allows it); measured cost: <=1 deg
+    # transient lag on a 30 deg/s moving target.
+    bootstrap_velocity=False,
 )
 
 

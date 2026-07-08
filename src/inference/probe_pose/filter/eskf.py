@@ -21,10 +21,18 @@ class SE3ErrorStateKF:
         process_model: ConstantVelocityModel | None = None,
         measurement_model: PoseMeasurementModel | None = None,
         min_dt: float = 1e-6,
+        bootstrap_velocity: bool = True,
     ):
         self.process = process_model or ConstantVelocityModel()
         self.measurement = measurement_model or PoseMeasurementModel()
         self.min_dt = min_dt
+        # Two-point-differencing velocity init from the first two measurements.
+        # Differencing amplifies measurement noise by ~2/dt^2, so with noisy
+        # measurements at short frame intervals the bootstrapped twist can be
+        # wildly wrong; disable to start at zero velocity and let the EKF learn
+        # it through updates (the pose-velocity cross-covariance built by the
+        # process model makes this converge within a few frames).
+        self.bootstrap_velocity = bootstrap_velocity
         self.state: FilterState | None = None
         self._initialized = False
         self._prev_meas: PoseMeasurement | None = None
@@ -64,7 +72,8 @@ class SE3ErrorStateKF:
             self.state = self.process.predict(self.state, dt)
 
         # Bootstrap velocity from first two measurements
-        if self._prev_meas is not None and np.allclose(self.state.twist, 0.0):
+        if (self.bootstrap_velocity and self._prev_meas is not None
+                and np.allclose(self.state.twist, 0.0)):
             self.state.twist = self._estimate_initial_velocity(
                 self._prev_meas, meas
             )

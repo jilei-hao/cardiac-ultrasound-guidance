@@ -43,6 +43,10 @@ class PoseFilter:
         sigma_meas_trans: Measurement noise on translation (m).
         timestamp_unit:  Scale factor to convert input timestamps to seconds.
                          Default 1e-9 for nanoseconds. Use 1.0 if already in seconds.
+        bootstrap_velocity: Initialize velocity by differencing the first two
+                         measurements (the vendored USGR behavior). Disable to
+                         start at zero velocity when those measurements may be
+                         noisy (differencing amplifies noise by ~2/dt^2).
     """
 
     def __init__(
@@ -52,6 +56,7 @@ class PoseFilter:
         sigma_meas_rot: float = 0.5,
         sigma_meas_trans: float = 0.5,
         timestamp_unit: float = 1e-9,
+        bootstrap_velocity: bool = True,
     ):
         process = ConstantVelocityModel(
             sigma_pose=sigma_pose,
@@ -64,6 +69,7 @@ class PoseFilter:
         self._ekf = SE3ErrorStateKF(
             process_model=process,
             measurement_model=measurement,
+            bootstrap_velocity=bootstrap_velocity,
         )
         self._ts_scale = timestamp_unit
 
