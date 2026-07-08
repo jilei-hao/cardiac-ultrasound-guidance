@@ -35,6 +35,7 @@ class GuidanceUIConfig:
     env_config: dict
     input_source: str # simulator, clarius, screen
     frames_folder: str = None
+    sim_realtime: bool = False
     screen_capture_window_title: str = "Input"
     clarius_ip: str = None
     clarius_port: int = 5828
@@ -228,7 +229,10 @@ class GuidanceUI:
 
         # Initialize the data streamer
         if self._config.input_source == "simulator":
-            self._data_streamer = FrameDataSimulator(frames_folder=self._config.frames_folder)
+            self._data_streamer = FrameDataSimulator(
+                frames_folder=self._config.frames_folder,
+                realtime=self._config.sim_realtime,
+            )
         elif self._config.input_source == "clarius":
             import data_access.clarius.clarius_streamer as clarius_streamer
             clarius_streamer.configure(
@@ -795,7 +799,13 @@ def main():
     parser.add_argument("--source", type=str, default="simulator", help="Data source: simulator, clarius, screen")
     parser.add_argument("--clarius-ip", type=str, default=None, help="Clarius probe IP address")
     parser.add_argument("--clarius-port", type=int, default=5828, help="Clarius probe port number")
-    parser.add_argument("--frames-folder", type=str, default=None, help="Folder containing frames for simulator")
+    parser.add_argument("--frames-folder", type=str, default=None,
+                        help="Folder containing frames for simulator: either a folder of "
+                             "frame_*.png (+ frame.imu.csv/frame.meta.csv), or a USGR/"
+                             "cusg-record capture root with an images/ subfolder")
+    parser.add_argument("--sim-realtime", action="store_true", default=False,
+                        help="Pace simulator playback to the recorded timestamps "
+                             "instead of free-running at inference speed")
     parser.add_argument("--capture-window-title", type=str, default="Input", help="Window title for screen capture")
     parser.add_argument("--window-size", type=int, default=512, help="Window size for the UI windows")
 
@@ -910,6 +920,7 @@ def main():
         },
         input_source=options.source,
         frames_folder=options.frames_folder,
+        sim_realtime=options.sim_realtime,
         screen_capture_window_title=options.capture_window_title,
         clarius_ip=options.clarius_ip,
         clarius_port=options.clarius_port,
