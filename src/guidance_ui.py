@@ -191,13 +191,13 @@ class GuidanceUI:
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
-        # Initialize the Windows. Left-to-right: annotated ultrasound, the 2D
-        # reticle, then the 3D guidance widget — the reticle sits between the
-        # image it is derived from and the 3D view of the same correction.
-        (self._main_window,
+        # Initialize the Windows. Left-to-right: 3D guidance widget, the 2D
+        # reticle, then the annotated ultrasound — the reticle sits between the
+        # 3D view of the correction and the image it is derived from.
+        (self._guidance_window,
          self._reticle_window,
-         self._guidance_window) = create_window_row(
-            ["Annotated Ultrasound", "2D Reticle", "Guidance Widget"],
+         self._main_window) = create_window_row(
+            ["Guidance Widget", "2D Reticle", "Annotated Ultrasound"],
             width=self._config.window_size,
             height=self._config.window_size,
             x_pos=100,
