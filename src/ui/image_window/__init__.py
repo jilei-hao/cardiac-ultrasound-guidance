@@ -12,6 +12,7 @@ from .window_factory import (
     get_image_window_class,
     create_image_window,
     create_dual_window_setup,
+    create_window_row,
     WindowManager
 )
 
@@ -28,6 +29,7 @@ __all__ = [
     'get_image_window_class', 
     'create_image_window',
     'create_dual_window_setup',
+    'create_window_row',
     'WindowManager',
     'QtImageWindow' if QT_AVAILABLE else None,
 ]

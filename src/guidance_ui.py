@@ -22,9 +22,10 @@ import numpy as np
 from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
 from inference.probe_pose import NUM_VIEWS, view_list_for
 from data_access.screen_capture.screen_capture import ScreenCapture
-from ui.image_window import create_dual_window_setup
+from ui.image_window import create_window_row
 from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
 from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
+from ui.reticle import ReticleRenderer
 from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
 from data_access.simulator import FrameDataSimulator
 from common.application_settings import ApplicationSettings
@@ -49,8 +50,10 @@ class GuidanceUI:
         self._env_config = config.env_config
         # UI components
         self._main_window = None
+        self._reticle_window = None
         self._guidance_window = None
         self._landmark_renderer = None
+        self._reticle_renderer = None
         self._guidance_widget_renderer = None
         self._application_settings = None
         # Data Access
@@ -188,10 +191,13 @@ class GuidanceUI:
         )
         self._guidance_pipeline = GuidancePipeline(config=guidance_config)
 
-        # Initialize the Windows
-        self._main_window, self._guidance_window = create_dual_window_setup(
-            main_title="Annotated Ultrasound",
-            guidance_title="Guidance Widget",
+        # Initialize the Windows. Left-to-right: 3D guidance widget, the 2D
+        # reticle, then the annotated ultrasound — the reticle sits between the
+        # 3D view of the correction and the image it is derived from.
+        (self._guidance_window,
+         self._reticle_window,
+         self._main_window) = create_window_row(
+            ["Guidance Widget", "2D Reticle", "Annotated Ultrasound"],
             width=self._config.window_size,
             height=self._config.window_size,
             x_pos=100,
@@ -227,6 +233,12 @@ class GuidanceUI:
             reference_body_path=self._env_config.get("reference_body_path"),
         )
 
+        # 2D reticle (USGR). Driven by the same probe-pose prediction as the
+        # 3D widget, so it shows nothing useful unless probe-pose is configured.
+        self._reticle_renderer = ReticleRenderer(
+            output_size=self._config.window_size
+        )
+
         # Initialize the data streamer
         if self._config.input_source == "simulator":
             self._data_streamer = FrameDataSimulator(
@@ -251,20 +263,23 @@ class GuidanceUI:
     def _create_key_bindings(self):
         """Create key bindings for the UI windows.
 
-        Precondition: both ``_main_window`` and ``_guidance_window`` have
-        been assigned in ``initialize``. Asserts narrow the type for the
-        registration calls below.
+        Precondition: ``_main_window``, ``_reticle_window`` and
+        ``_guidance_window`` have been assigned in ``initialize``. Asserts
+        narrow the type for the registration calls below.
         """
         assert self._main_window is not None
+        assert self._reticle_window is not None
         assert self._guidance_window is not None
 
         # Quit
         def handle_quit():
             print("Quit key pressed!")
             self._main_window.destroy()
+            self._reticle_window.destroy()
             self._guidance_window.destroy()
 
         self._main_window.register_key_handler('q', handle_quit)
+        self._reticle_window.register_key_handler('q', handle_quit)
         self._guidance_window.register_key_handler('q', handle_quit)
 
         # LVEF computation
@@ -473,9 +488,9 @@ class GuidanceUI:
             print(f"{'✅' if new_state else '⛔'} pose smoothing (Kalman): "
                   f"{'on' if new_state else 'off'}")
 
-        # Register on both windows so the hotkeys work regardless of which
+        # Register on every window so the hotkeys work regardless of which
         # one has keyboard focus.
-        for window in (self._main_window, self._guidance_window):
+        for window in (self._main_window, self._reticle_window, self._guidance_window):
             window.register_key_handler('a', handle_toggle_arrows)
             window.register_key_handler('x', handle_toggle_axes)
             window.register_key_handler('c', handle_calibrate)
@@ -506,18 +521,27 @@ class GuidanceUI:
             print("❌ Failed to initialize main window")
             return
 
+        if not self._reticle_window.initialize():
+            print("❌ Failed to initialize reticle window")
+            self._main_window.destroy()
+            return
+
         if not self._guidance_window.initialize():
             print("❌ Failed to initialize guidance window")
             self._main_window.destroy()
+            self._reticle_window.destroy()
             return
-        
+
+
         try:
             if self._data_streamer:
                 self._data_streamer.start()
             else:
                 raise RuntimeError("🛑 Error: Data streamer not initialized. Call initialize() first.")
 
-            while self._main_window.is_window_active() and self._guidance_window.is_window_active():
+            while (self._main_window.is_window_active()
+                   and self._reticle_window.is_window_active()
+                   and self._guidance_window.is_window_active()):
                 # Snapshot once per iteration so toggling 't' mid-iteration
                 # can't leave half the t_X stamps as 0.0 and the other
                 # half as raw perf_counter() seconds.
@@ -567,6 +591,7 @@ class GuidanceUI:
                 last_out = self._last_inference_output
                 last_rotation = None
                 last_translation = None
+                probe_pose = None
                 if last_out is not None:
                     probe_pose = getattr(last_out, "probe_pose_prediction", None)
                     use_usgr_rot = (
@@ -594,6 +619,14 @@ class GuidanceUI:
                 self._draw_view_label(out_frame_guidance_bgr)
 
                 t_widget = time.perf_counter() if timing_on else 0.0
+
+                # 2D reticle — same prediction the 3D widget just consumed, so
+                # the two panels never disagree by a frame. Fed the model's
+                # native forward transform (no transpose; see ReticleRenderer).
+                out_frame_reticle_bgr = self._reticle_renderer.render(probe_pose)
+                self._draw_reticle_label(out_frame_reticle_bgr)
+
+                t_reticle = time.perf_counter() if timing_on else 0.0
 
                 # Block until the current-frame inference completes.
                 inference_output = inference_future.result()
@@ -640,6 +673,7 @@ class GuidanceUI:
                             self._draw_fps(out_frame_main_bgr, fps)
 
                 out_frame_main = cv2.cvtColor(out_frame_main_bgr, cv2.COLOR_BGR2RGB)
+                out_frame_reticle = cv2.cvtColor(out_frame_reticle_bgr, cv2.COLOR_BGR2RGB)
                 out_frame_guidance = cv2.cvtColor(out_frame_guidance_bgr, cv2.COLOR_BGR2RGB)
 
 
@@ -648,13 +682,19 @@ class GuidanceUI:
                     print("❌ Failed to display main frame")
                     break
 
+                if not self._reticle_window.display_frame_rgb(out_frame_reticle):
+                    print("❌ Failed to display reticle frame")
+                    break
+
                 if not self._guidance_window.display_frame_rgb(out_frame_guidance):
                     print("❌ Failed to display guidance frame")
                     break
 
-                # Update both windows
-                if not self._main_window.update() or not self._guidance_window.update():
-                    print("🛑 One or both windows closed")
+                # Update all windows
+                if (not self._main_window.update()
+                        or not self._reticle_window.update()
+                        or not self._guidance_window.update()):
+                    print("🛑 One or more windows closed")
                     break
 
                 if timing_on:
@@ -663,7 +703,8 @@ class GuidanceUI:
                         "capture":    (t_capture     - t_loop_start) * 1e3,
                         "preprocess": (t_preprocess  - t_capture)    * 1e3,
                         "widget":     (t_widget      - t_preprocess) * 1e3,
-                        "infer_wait": (t_infer_wait  - t_widget)     * 1e3,
+                        "reticle":    (t_reticle     - t_widget)     * 1e3,
+                        "infer_wait": (t_infer_wait  - t_reticle)    * 1e3,
                         "overlay":    (t_overlay     - t_infer_wait) * 1e3,
                         "display":    (t_display     - t_overlay)    * 1e3,
                         "total":      (t_display     - t_loop_start) * 1e3,
@@ -700,7 +741,7 @@ class GuidanceUI:
         avg = {k: sum(s.get(k, 0.0) for s in samples) / len(samples) for k in keys}
         total = avg.get("total", 0.0)
         fps = (1000.0 / total) if total > 0 else 0.0
-        outer = ["capture", "preprocess", "widget", "infer_wait", "overlay", "display"]
+        outer = ["capture", "preprocess", "widget", "reticle", "infer_wait", "overlay", "display"]
         outer_str = " ".join(f"{k}={avg[k]:5.1f}" for k in outer if k in avg)
         infer_keys = [k for k in keys if k.startswith("infer.")]
         infer_str = " ".join(
@@ -751,6 +792,31 @@ class GuidanceUI:
         thickness = 1
         margin = 10
         (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+        x = margin
+        y = frame_bgr.shape[0] - margin
+        cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
+                    (0, 0, 0), thickness + 2, cv2.LINE_AA)
+        cv2.putText(frame_bgr, text, (x, y), font, scale,
+                    (0, 255, 255), thickness, cv2.LINE_AA)
+
+    def _draw_reticle_label(self, frame_bgr: np.ndarray) -> None:
+        """Draw the reticle's target view bottom-left (in-place).
+
+        Deliberately does NOT echo the 'g' rotation-source toggle: the reticle
+        is always driven by the USGR probe-pose prediction, so reprinting
+        'rot: legacy' here would claim otherwise.
+        """
+        view = self._view_list[self._target_view_index]
+        usgr_ok = (
+            self._guidance_pipeline is not None
+            and self._guidance_pipeline.probe_pose_available
+        )
+        filt = "on" if (usgr_ok and self._guidance_pipeline.probe_pose_filter_enabled) else "off"
+        text = f"Target: {self._target_view_index + 1} {view}  |  smooth: {filt}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 1
+        margin = 10
         x = margin
         y = frame_bgr.shape[0] - margin
         cv2.putText(frame_bgr, text, (x + 1, y + 1), font, scale,
