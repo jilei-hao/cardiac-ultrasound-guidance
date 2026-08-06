@@ -72,9 +72,43 @@ def create_image_window(*, backend: Optional[str] = None, **kwargs) -> AbstractI
     return WindowClass(**kwargs)
 
 
+def create_window_row(
+        titles: list[str],
+        width: int = 512,
+        height: int = 512,
+        x_pos: int = 100,
+        y_pos: int = 100,
+        **kwargs) -> list[AbstractImageWindow]:
+    """
+    Create N equally sized windows laid out left-to-right in one row.
+
+    Args:
+        titles: Window titles, in left-to-right display order
+        width: Width for every window
+        height: Height for every window
+        x_pos: X position of the leftmost window
+        y_pos: Y position of the row
+        **kwargs: Additional keyword arguments passed to window constructors
+
+    Returns:
+        List of windows, in the same order as ``titles``
+    """
+    return [
+        create_image_window(
+            title=title,
+            width=width,
+            height=height,
+            x_pos=x_pos + i * width,
+            y_pos=y_pos,
+            **kwargs
+        )
+        for i, title in enumerate(titles)
+    ]
+
+
 def create_dual_window_setup(
         main_title: str = "Main Window",
-        guidance_title: str = "Guidance Window", 
+        guidance_title: str = "Guidance Window",
         width: int = 512,
         height: int = 512,
         x_pos: int = 100,
@@ -82,7 +116,7 @@ def create_dual_window_setup(
         **kwargs) -> tuple[AbstractImageWindow, AbstractImageWindow]:
     """
     Create a dual window setup similar to the existing main.py implementation.
-    
+
     Args:
         main_title: Title for the main window
         guidance_title: Title for the guidance window
@@ -91,30 +125,18 @@ def create_dual_window_setup(
         x_pos: Starting x position
         y_pos: Starting y position
         **kwargs: Additional keyword arguments passed to window constructors
-        
+
     Returns:
         Tuple of (main_window, guidance_window)
     """
-    # Create main window
-    main_window = create_image_window(
-        title=main_title,
+    main_window, guidance_window = create_window_row(
+        [main_title, guidance_title],
         width=width,
         height=height,
         x_pos=x_pos,
         y_pos=y_pos,
         **kwargs
     )
-    
-    # Create guidance window positioned to the right
-    guidance_window = create_image_window(
-        title=guidance_title,
-        width=width,
-        height=height,
-        x_pos=x_pos + width,  # Position to the right of main window
-        y_pos=y_pos,
-        **kwargs
-    )
-    
     return main_window, guidance_window
 
 
