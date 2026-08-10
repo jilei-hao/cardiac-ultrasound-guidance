@@ -169,6 +169,19 @@ class ProbePosePredictor:
         # error; |dT| p95 = 0.3 mm; the ESKF smooths the residual jitter).
         # CUDA-only; ignored on CPU.
         autocast_fp16: bool = False,
+        # How many CONSECUTIVE degenerate (det<=0) frames the filter may coast
+        # through before the prediction is surfaced as valid=False.
+        #
+        # Without a limit the coast path below forces valid=True indefinitely, so
+        # a model that has stopped producing sane rotations -- which is exactly
+        # what happens off-view, since the head "collapses toward a degenerate
+        # mean when unconfident" -- keeps the ghost probe on screen, extrapolating
+        # on filter velocity with no measurement pulling it back. That renders a
+        # confident-looking cue built from nothing. Coasting a few frames is still
+        # right (it bridges isolated dropouts); coasting forever is not.
+        #
+        # 0 disables coasting entirely; None restores the old unbounded behaviour.
+        max_coast_frames: Optional[int] = 5,
     ):
         self.device = device
         self.checkpoint_path = checkpoint_path
@@ -193,6 +206,8 @@ class ProbePosePredictor:
         self._filter: Optional[PoseFilter] = None
         self._filter_view_idx: Optional[int] = None
         self._last_ts: Optional[float] = None
+        self.max_coast_frames = max_coast_frames
+        self._coast_frames = 0
         if self.use_filter:
             self._filter = PoseFilter(**self._filter_kwargs)
 
@@ -269,6 +284,18 @@ class ProbePosePredictor:
         self._filter = PoseFilter(**self._filter_kwargs) if self.use_filter else None
         self._filter_view_idx = None
         self._last_ts = None
+        self._coast_frames = 0
+
+    @property
+    def coast_frames(self) -> int:
+        """Consecutive degenerate frames the filter is currently coasting through.
+
+        A direct read-out of how unconfident the head has been lately: the raw
+        3x3 collapses toward a degenerate mean when the model has nothing to go
+        on, so a nonzero run here means the cue is being extrapolated rather
+        than measured. 0 whenever the last frame produced a usable rotation.
+        """
+        return self._coast_frames
 
     def set_filter_enabled(self, enabled: bool) -> None:
         """Turn ESKF smoothing on/off at runtime; resets filter state."""
@@ -344,13 +371,21 @@ class ProbePosePredictor:
                 time_back = (self._last_ts is not None and timestamp < self._last_ts)
                 if view_changed or time_back:
                     self._filter = PoseFilter(**self._filter_kwargs)
+                    self._coast_frames = 0
                 self._filter_view_idx = view_idx
                 self._last_ts = timestamp
                 if valid:
+                    self._coast_frames = 0
                     filtered = self._filter(timestamp, np.concatenate([R_rel.flatten(), T_rel]))
                 elif self._filter._ekf.initialized:
                     filtered = self._filter(timestamp)  # predict-only, no measurement
-                    valid = True
+                    self._coast_frames += 1
+                    # Bridge isolated degenerate frames, but stop vouching for the
+                    # extrapolation once the model has been unconfident for a
+                    # sustained run -- past that point the pose is pure filter
+                    # momentum, not evidence. Callers hide the cue on valid=False.
+                    valid = (self.max_coast_frames is None
+                             or self._coast_frames <= self.max_coast_frames)
                 else:
                     filtered = None
                 if filtered is not None:
