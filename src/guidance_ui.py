@@ -19,14 +19,14 @@ import time
 
 import cv2
 import numpy as np
-from inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
-from inference.probe_pose import NUM_VIEWS, view_list_for
+from guidance.inference.guidance_pipeline import GuidancePipelineConfig, GuidancePipeline
+from guidance.inference.probe_pose import NUM_VIEWS, view_list_for
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_window_row
 from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
-from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
-from ui.reticle import ReticleRenderer
-from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
+from guidance.rendering.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
+from guidance.rendering.reticle import ReticleRenderer
+from guidance.rendering.fourch_landmark_renderer import FourChamberLandmarkRenderer
 from data_access.simulator import FrameDataSimulator
 from common.application_settings import ApplicationSettings
 

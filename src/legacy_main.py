@@ -7,16 +7,16 @@ import tkinter as tk
 import threading
 import inference.landmark.landmark_prediction as lp
 # Import fourch_landmark pipeline
-from inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
-import inference.pose_classification.pose_classification as pc
-from inference.pose_classification.pose_classification import PoseClassifierResultPooler
+from guidance.inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
+import inference.pose_classification as pc
+from inference.pose_classification import PoseClassifierResultPooler
 import ui.image_helpers as ih
-from ui.guidance_widget import GuidanceWidgetRenderer3D
-from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
-import inference.inference_helper as ihp
-from inference.rotation.rotation_predictor import create_rotation_predictor
-from inference.lvef.frame_buffer import FrameBuffer
-from inference.lvef.lvef_prediction import LVEFPredictor
+from guidance.rendering.guidance_widget import GuidanceWidgetRenderer3D
+from guidance.rendering.fourch_landmark_renderer import FourChamberLandmarkRenderer
+import guidance.inference.inference_helper as ihp
+from guidance.inference.rotation.rotation_predictor import create_rotation_predictor
+from guidance.inference.lvef.frame_buffer import FrameBuffer
+from guidance.inference.lvef.lvef_prediction import LVEFPredictor
 from common.application_settings import ApplicationSettings
 import requests
 from queue import Queue

@@ -1,27 +1,43 @@
-import numpy as np
+"""Image helpers used only by the CUSG desktop app.
+
+These lived in the shared image_helpers module, but vigil-system's vendored copy
+of the portable core does not carry them -- its ROS nodes never call them. Rather
+than force the core to keep code one of its two consumers doesn't want, they live
+here, app-side, so src/guidance/rendering/image_helpers.py can stay byte-identical
+to the vendored copy.
+
+Core helpers the app also uses are re-exported below, so `import ui.image_helpers
+as ih` keeps reaching everything it used to.
+"""
 import cv2
-import math
-from .mesh_helper import load_stl_vertices, draw_stl_simplified
+import numpy as np
+
+from guidance.rendering.image_helpers import (  # noqa: F401  (re-export)
+    add_rgb_border_to_result,
+    overlay_color_legend,
+)
+from .mesh_helper import load_stl_vertices, draw_stl_simplified  # noqa: F401
+
+
 
 def draw_circle_on_image(center, radius, image, bgr):
     cv2.circle(image, center, radius, bgr, -1)
     return image
 
+
 def draw_border_around_image(image, width, bgr):
     cv2.rectangle(image, (0, 0), (image.shape[1]-1, image.shape[0]-1), bgr, width)
     return image
 
+
 def rgb_to_bgr(rgb):
     return (rgb[2], rgb[1], rgb[0])
+
 
 def add_rgb_circle_to_result(input_frame, rgb):
     center = (90, 22); radius = 5
     return draw_circle_on_image(center, radius, input_frame, rgb)
 
-def add_rgb_border_to_result(input_frame_bgr, rgb):
-    width = 40
-    bgr = rgb_to_bgr(rgb)
-    return draw_border_around_image(input_frame_bgr, width, bgr)
 
 def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6, reference_size=112):
     """
@@ -99,44 +115,6 @@ def overlay_landmarks(vis_frame, landmarks_tensor, app_settings, ere_threshold=6
     
     return vis_frame
 
-def overlay_color_legend(input_frame, legend_bgra, top=10, left=10, pct_width=0.2, margin=20):
-    """Overlay a BGRA color legend onto the input frame at specified position."""
-    h, w = input_frame.shape[:2]
-    lh, lw = legend_bgra.shape[:2]
-
-    # resample the legend to fit the specified percentage of the input frame
-    new_lw = int(w * pct_width)
-    # compute new lh to maintain aspect ratio
-    aspect_ratio = lw / lh
-    new_lh = int(new_lw / aspect_ratio)
-    legend_resampled = cv2.resize(legend_bgra, (new_lw, new_lh), interpolation=cv2.INTER_AREA)
-    legend_bgra = legend_resampled
-    lh, lw = legend_bgra.shape[:2]
-    
-    # Calculate position
-    y1 = top + margin
-    x1 = left + margin
-    y2 = min(h, y1 + lh)
-    x2 = min(w, x1 + lw)
-    
-    # Adjust legend size if it exceeds frame boundaries
-    legend_crop = legend_bgra[0:(y2 - y1), 0:(x2 - x1)]
-    
-    # Split legend into BGR and Alpha channels
-    legend_bgr = legend_crop[:, :, :3]
-    alpha_mask = legend_crop[:, :, 3] / 255.0  # Normalize alpha to [0, 1]
-    
-
-    # Overlay legend onto input frame
-    for c in range(3):  # For B, G, R channels
-        input_frame[y1:y2, x1:x2, c] = (
-            alpha_mask * legend_bgr[:, :, c] +
-            (1 - alpha_mask) * input_frame[y1:y2, x1:x2, c]
-        ).astype(np.uint8)
-
-    return input_frame
-
-
 
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """Convert quaternion to 3x3 rotation matrix"""
@@ -150,6 +128,7 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
         [    2*(qx*qz - qw*qy),     2*(qy*qz + qw*qx), 1 - 2*(qx*qx + qy*qy)]
     ], dtype=float)
     return R
+
 
 def draw_stl_model(input_frame, stl_path, position=(150, 150), size=80, qw=1.0, qx=0.0, qy=0.0, qz=0.0):
     R = quaternion_to_rotation_matrix(qw, qx, qy, qz)

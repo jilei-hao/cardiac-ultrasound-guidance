@@ -51,7 +51,7 @@ def main() -> int:
         return 2
 
     import torch
-    from inference.probe_pose import ProbePosePredictor, CANONICAL_VIEW_LIST
+    from guidance.inference.probe_pose import ProbePosePredictor, CANONICAL_VIEW_LIST
 
     if args.device:
         device = args.device

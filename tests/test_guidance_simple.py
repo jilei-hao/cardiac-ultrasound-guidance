@@ -10,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from ui.guidance_widget import GuidanceWidgetRenderer3D
+from guidance.rendering.guidance_widget import GuidanceWidgetRenderer3D
 
 
 def test_renderer_creation():

@@ -20,10 +20,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from ui.image_window import create_dual_window_setup
 from data_access.simulator import FrameDataSimulator
-from ui.guidance_widget import GuidanceWidgetRenderer3D
-from ui.fourch_landmark_renderer import FourChamberLandmarkRenderer
+from guidance.rendering.guidance_widget import GuidanceWidgetRenderer3D
+from guidance.rendering.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import ui.image_helpers as ih
-from inference.guidance_pipeline import GuidancePipeline, GuidancePipelineConfig
+from guidance.inference.guidance_pipeline import GuidancePipeline, GuidancePipelineConfig
 
 try:
     import data_access.clarius.clarius_streamer as ClariusStreamer
