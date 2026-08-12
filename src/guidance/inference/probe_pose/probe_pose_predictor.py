@@ -28,6 +28,7 @@ import einops
 
 from .usgr_model import PoseTransformer, Normalizer
 from .filter import PoseFilter
+from .. import DINOV3_REPO_DIR
 
 
 # Default SE(3) ESKF noise params, tuned for smoothing the cm/few-degree jitter
@@ -198,9 +199,7 @@ class ProbePosePredictor:
 
         # Reuse the dinov3 hub bundled at src/inference/dinov3 (same as RotationPredictor).
         if dinov3_repo_dir is None:
-            self.dinov3_repo_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "dinov3"
-            )
+            self.dinov3_repo_dir = DINOV3_REPO_DIR
         else:
             self.dinov3_repo_dir = dinov3_repo_dir
 

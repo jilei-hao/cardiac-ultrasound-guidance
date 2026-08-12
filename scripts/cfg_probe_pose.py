@@ -44,8 +44,8 @@ def main():
 
     import torch
     from scipy.spatial.transform import Rotation, Slerp
-    from inference.probe_pose import ProbePosePredictor, CANONICAL_VIEW_LIST
-    from inference.probe_pose.probe_pose_predictor import (
+    from guidance.inference.probe_pose import ProbePosePredictor, CANONICAL_VIEW_LIST
+    from guidance.inference.probe_pose.probe_pose_predictor import (
         _nearest_rotation, preprocess_image_for_model, CLASS_LENGTH)
 
     device = args.device or ("mps" if torch.backends.mps.is_available()

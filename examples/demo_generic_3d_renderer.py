@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import numpy as np
 import trimesh
-from src.ui.generic_3d_renderer import (
+from src.guidance.rendering.generic_3d_renderer import (
     Generic3DRenderer,
     create_translation_matrix,
     create_rotation_matrix,

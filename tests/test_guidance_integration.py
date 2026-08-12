@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from src.ui.guidance_widget import GuidanceWidgetRenderer3D
+from src.guidance.rendering.guidance_widget import GuidanceWidgetRenderer3D
 
 
 def test_renderer_creation():

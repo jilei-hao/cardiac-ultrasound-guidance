@@ -18,9 +18,9 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-from echo_dataset import LABEL_VALUES
-from convnext_fpn import ConvNeXtFPN
-from qc_seg2landmarks import (
+from .echo_dataset import LABEL_VALUES
+from .convnext_fpn import ConvNeXtFPN
+from .qc_seg2landmarks import (
     process_sequence,
     intersect_labels,
     biggest_contour,

@@ -28,8 +28,8 @@ import torch
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from inference.probe_pose import ProbePosePredictor          # noqa: E402
-from inference.probe_pose.probe_pose_predictor import (        # noqa: E402
+from guidance.inference.probe_pose import ProbePosePredictor          # noqa: E402
+from guidance.inference.probe_pose.probe_pose_predictor import (        # noqa: E402
     preprocess_image_for_model,
     _nearest_rotation,
 )

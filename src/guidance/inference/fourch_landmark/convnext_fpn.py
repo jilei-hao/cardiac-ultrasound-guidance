@@ -6,6 +6,9 @@ import torch.nn as nn
 # -------------------------
 # Small conv-bn-relu block
 # -------------------------
+from .. import DINOV3_REPO_DIR
+
+
 class ConvBNAct(nn.Module):
     def __init__(self, c_in, c_out, k=3, s=1, p=1):
         super().__init__()
@@ -55,7 +58,7 @@ class HubConvNeXtFeatures(nn.Module):
         # Local DINOv3 repo path
         if dinov3_repo_dir is None:
             print("Using default DINOv3 repo path.")
-            repo_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dinov3")
+            repo_dir = DINOV3_REPO_DIR
         entry = "dinov3_convnext_base"
         
         assert os.path.isdir(repo_dir), f"repo_dir does not exist: {repo_dir}"

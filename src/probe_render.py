@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from data_access.simulator import FrameDataSimulator
-from ui.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
+from guidance.rendering.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from ui.image_window import create_image_window
 
 

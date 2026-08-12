@@ -40,7 +40,7 @@ def main():
     args = ap.parse_args()
 
     import torch
-    from inference.probe_pose import ProbePosePredictor, CANONICAL_VIEW_LIST
+    from guidance.inference.probe_pose import ProbePosePredictor, CANONICAL_VIEW_LIST
 
     device = args.device or ("mps" if torch.backends.mps.is_available()
                              else "cuda" if torch.cuda.is_available() else "cpu")
