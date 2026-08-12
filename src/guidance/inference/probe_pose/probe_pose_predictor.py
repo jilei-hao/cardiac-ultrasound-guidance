@@ -5,7 +5,7 @@ trainable transformer head). Given a single ultrasound frame and a target standa
 view (0-5), it predicts the body-centric relative SE(3) transform from the current
 probe pose to that canonical view:
 
-    pose = [R_rel (9, row-major 3x3), T_rel (3, metres)]
+    pose = [R_rel (9, row-major 3x3), T_rel (3, meters)]
 
 This is a strict superset of the existing rotation-only ``RotationPredictor``:
 ``R_rel`` plays the same role as that model's rotation correction, and ``T_rel``
@@ -17,7 +17,6 @@ The DINOv3 backbone is loaded from the dinov3 hub already bundled at
 """
 
 import contextlib
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -85,7 +84,7 @@ class ProbePosePrediction:
     Attributes:
         R_rel:    (3, 3) proper rotation (SO(3), det=+1) from current pose -> target
                   view, SVD-projected from the head's raw (unconstrained) output.
-        T_rel:    (3,) translation in metres, in the probe's local frame.
+        T_rel:    (3,) translation in meters, in the probe's local frame.
         view_idx: index into ``CANONICAL_VIEW_LIST`` of the requested target view.
         valid:    True when the pose is usable: either the RAW predicted rotation
                   was sane (det > 0), or it was degenerate but the ESKF had state
@@ -141,8 +140,7 @@ class ProbePosePredictor:
         norm_stats_path: str,
         dino_weights_path: str,
         device,
-        dinov3_repo_dir: Optional[str] = None,
-        dino_model: str = "dinov3_convnext_base",
+        dino_model: str = "dinov3_vitl16",
         embed_dim: int = 1024,
         depth: int = 4,
         num_heads: int = 16,
@@ -197,11 +195,7 @@ class ProbePosePredictor:
         if self.use_filter:
             self._filter = PoseFilter(**self._filter_kwargs)
 
-        # Reuse the dinov3 hub bundled at src/inference/dinov3 (same as RotationPredictor).
-        if dinov3_repo_dir is None:
-            self.dinov3_repo_dir = DINOV3_REPO_DIR
-        else:
-            self.dinov3_repo_dir = dinov3_repo_dir
+        self.dinov3_repo_dir = DINOV3_REPO_DIR
 
         self._load_model()
 

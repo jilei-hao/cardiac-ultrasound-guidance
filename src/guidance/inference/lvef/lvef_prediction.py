@@ -71,15 +71,6 @@ class LVEFPredictor:
         """
         return self._frame_buffer.is_video_good() # this should not be in frame buffer
 
-    def get_buffer_classifications(self):
-        """Return the per-frame PoseResult list currently in the buffer.
-
-        Useful for troubleshooting what colour/score distribution the LVEF
-        model is actually predicting on.
-        """
-        return self._frame_buffer.get_all_classifications()
-
-    
     def run_prediction(self):
         """
         Run LVEF prediction on a video matrix.

@@ -40,7 +40,6 @@ DINOv3 backbone weights file (the same ``dinov3_vitl16`` file probe_pose uses).
 
 from collections import deque
 from dataclasses import dataclass
-import os
 import contextlib
 from typing import Optional
 
@@ -52,6 +51,7 @@ import torch.nn as nn
 
 from ..probe_pose.usgr_model.dino import DinoEncoder
 from ..probe_pose.usgr_model.transformer import TransformerHead
+from .. import DINOV3_REPO_DIR
 
 
 # Traffic-light thresholds on the raw score. The USGR reference visualizer
@@ -252,7 +252,6 @@ class QualityScorePredictor:
         checkpoint_path: str,
         dino_weights_path: str,
         device,
-        dinov3_repo_dir: Optional[str] = None,
         dino_model: str = "dinov3_vitl16",
         embed_dim: int = 1024,
         depth: int = 4,
@@ -286,14 +285,7 @@ class QualityScorePredictor:
         self.autocast_fp16 = autocast_fp16
         self.model = None
 
-        # Reuse the dinov3 hub bundled at src/inference/dinov3 (same as
-        # ProbePosePredictor / RotationPredictor).
-        if dinov3_repo_dir is None:
-            self.dinov3_repo_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "dinov3"
-            )
-        else:
-            self.dinov3_repo_dir = dinov3_repo_dir
+        self.dinov3_repo_dir = DINOV3_REPO_DIR
 
         self._load_model()
 

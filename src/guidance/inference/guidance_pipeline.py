@@ -8,22 +8,19 @@ Provides unified interface to run:
 """
 
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
 import os
 import time
 
 import cv2
-import numpy as np
-import torch
 from .inference_helper import get_device
 from .fourch_landmark.fourch_landmark_pipeline import (
     configure_fourch_landmark_pipeline,
     run_fourch_core_prediction
 )
 from .rotation.rotation_predictor import create_rotation_predictor
-from .probe_pose import create_probe_pose_predictor, ProbePosePrediction
+from .probe_pose import create_probe_pose_predictor
 from .pose_classification import pose_classification
 from .quality_score import (
     create_quality_score_predictor,
@@ -44,21 +41,14 @@ class GuidancePipelineConfig:
     pose_classification_weights: str
     lvef_weights: str
     landmarks_per_chamber: dict
-    # Local dinov3 repo dir for the 4-chamber landmark backbone. None lets
-    # configure_fourch_landmark_pipeline fall back to its own default (e.g.
-    # torch.hub); deployments with an offline dinov3 checkout pass it here.
-    dinov3_repo_dir: Optional[str] = None
     # Optional probe-pose (USGR PoseTransformer) standard-view guidance.
     # When any of these is missing, the probe-pose stage is disabled and the
     # pipeline falls back to rotation-only guidance.
     probe_pose_weights: Optional[str] = None
     probe_pose_norm_stats: Optional[str] = None
     probe_pose_dino_weights: Optional[str] = None
-    # Encoder variant + input size the checkpoint was trained with. The demo
-    # checkpoints (ema_9000/21000) use convnext_base; the 0610 invivo run
-    # (ema_11000) uses dinov3_vitl16. Both emit 1024-dim features, so a wrong
-    # pairing fails loudly at load (mismatched ConvNeXt vs ViT keys).
-    probe_pose_dino_model: str = "dinov3_convnext_base"
+    # Encoder variant and input size used by the deployed invivo checkpoint.
+    probe_pose_dino_model: str = "dinov3_vitl16"
     probe_pose_image_size: int = 512
     # H-flip the input frame before inference to match the training chirality
     # (USGR trains LV-on-left). Clarius/CUSG frames are LV-on-right, so the
@@ -67,12 +57,10 @@ class GuidancePipelineConfig:
     # is already LV-on-left (e.g. the USGR invivo reproduction data).
     probe_pose_mirror_input: bool = False
 
-    # Optional USGR quality-score ("traffic light v2") classifier. This is an
-    # ALTERNATIVE to the ResNet18 pose classifier above (pose_classification);
-    # both stay loaded and the consumer toggles between them at runtime. The
-    # stage is disabled (predictor not built) when quality_score_weights is
-    # missing. Needs a DINOv3 backbone, so quality_score_dino_weights must also
-    # be set (reuse the same dinov3_vitl16 file probe_pose uses).
+    # Optional USGR quality-score classifier. This is an alternative to the
+    # ResNet18 pose classifier. The runtime supplies these paths, and therefore
+    # builds this stage, only when the USGR traffic-light source is selected.
+    # It reuses the same DINOv3 ViT-L backbone file as probe pose.
     quality_score_weights: Optional[str] = None
     quality_score_dino_weights: Optional[str] = None
     # Encoder variant + input size the score checkpoint was trained with. The
@@ -86,9 +74,6 @@ class GuidancePipelineConfig:
     # green_above <= green). Used only in DISCRETE border mode.
     quality_score_red_below: float = -1.0
     quality_score_green_above: float = 1.0
-    # Deprecated: prefer the unified traffic_light_pool_size. Kept as a
-    # per-source fallback for pre-unification configs.
-    quality_score_pool_size: int = 15
     quality_score_score_min: float = -3.0
     quality_score_score_max: float = 3.0
 
@@ -113,34 +98,12 @@ class GuidancePipelineConfig:
     # Unified border-smoothing window (frames) for whichever source is active:
     # the border colour is the mean of the last N per-frame scores (moving
     # average). One knob drives BOTH poolers, so it follows the active source.
-    # None -> fall back to the per-source *_pool_size aliases below (pre-
-    # unification behaviour). Set (e.g. in config) -> wins for both sources.
-    traffic_light_pool_size: Optional[int] = None
+    traffic_light_pool_size: int = 15
     # Legacy pose-classifier raw-score range used to normalize to the 0..1
     # scale. [-2, 1] places the default 1/3, 2/3 cut-points at the classifier's
     # historical -1 (red) / 0 (green) raw thresholds.
     pose_classification_score_min: float = -2.0
     pose_classification_score_max: float = 1.0
-    # Deprecated: prefer the unified traffic_light_pool_size. Kept as a
-    # per-source fallback for pre-unification configs.
-    pose_classification_pool_size: int = 15
-    # Deprecated alias for traffic_light_continuous (kept so existing configs
-    # that set the quality-only flag still work). Prefer traffic_light_continuous.
-    quality_score_continuous: bool = False
-
-@dataclass
-class GuidancePipelineOutput:
-    cla: np.ndarray
-    landmarks_tensor: np.ndarray
-    rotation_prediction: np.ndarray
-    pose_classification_prediction_rgb: np.ndarray
-    # Body-centric relative transform to the requested standard view (or None
-    # when the probe-pose predictor is unavailable).
-    probe_pose_prediction: Optional[ProbePosePrediction] = None
-    # USGR quality-score ("traffic light v2") outputs. Populated only when the
-    # quality classifier is loaded AND enabled; both None otherwise.
-    quality_score: Optional[float] = None
-    quality_rgb: Optional[tuple] = None
 
 
 class GuidancePipeline:
@@ -150,7 +113,6 @@ class GuidancePipeline:
             weight_path=config.fourch_landmark_weights,
             device=self.__device,
             landmarks_per_chamber=config.landmarks_per_chamber,
-            dinov3_repo_dir=config.dinov3_repo_dir
         )
         self.__rotation_predictor = create_rotation_predictor(
             config_path=config.rotation_prediction_config,
@@ -181,24 +143,18 @@ class GuidancePipeline:
             print("[GuidancePipeline] Probe-pose assets not found; standard-view "
                   "guidance disabled (rotation-only fallback).")
 
-        _model, _preprocess = pose_classification.load_pretrained_model(
+        self.__pose_classifier_model = pose_classification.load_pretrained_model(
             self.__device, weight_path=config.pose_classification_weights
         )
-        self.__pose_classifier_model = _model
-        self.__pose_classifier_preprocess = _preprocess
-        # Border-smoothing window: one unified traffic_light_pool_size drives
-        # BOTH poolers (so it follows whichever source is toggled on); when it's
-        # None, fall back to each source's deprecated per-source *_pool_size.
-        _tl_pool = config.traffic_light_pool_size
-        _pose_pool = _tl_pool if _tl_pool is not None else config.pose_classification_pool_size
-        _quality_pool = _tl_pool if _tl_pool is not None else config.quality_score_pool_size
+        # One smoothing window follows whichever traffic-light source is active.
+        pool_size = config.traffic_light_pool_size
         # Continuous-score pooler for the legacy classifier, mirroring the
         # quality pooler: average the raw score over a window, then map the
         # smoothed value through the shared traffic_light scale (discrete or
         # continuous). This replaces the old majority-vote-on-colours pooling so
         # the legacy border honours the same percentage cut-points + continuous
         # toggle as the quality border.
-        self.__pose_score_pooler = QualityScorePooler(pool_size=_pose_pool)
+        self.__pose_score_pooler = QualityScorePooler(pool_size=pool_size)
         self.__pose_score_min = config.pose_classification_score_min
         self.__pose_score_max = config.pose_classification_score_max
 
@@ -209,16 +165,14 @@ class GuidancePipeline:
         # set_quality_score_enabled(True) -- the consumer toggles it at runtime.
         self.__quality_score_predictor = None
         self.__quality_score_enabled = False
-        self.__quality_score_pooler = QualityScorePooler(pool_size=_quality_pool)
+        self.__quality_score_pooler = QualityScorePooler(pool_size=pool_size)
         self.__quality_score_red_below = config.quality_score_red_below
         self.__quality_score_green_above = config.quality_score_green_above
         self.__quality_score_score_min = config.quality_score_score_min
         self.__quality_score_score_max = config.quality_score_score_max
         # Shared continuous-gradient toggle + percentage cut-points, applied to
         # BOTH the legacy and quality borders through inference/traffic_light.
-        # Display-only; toggled at runtime via set_traffic_light_continuous().
-        self.__traffic_light_continuous = bool(
-            config.traffic_light_continuous or config.quality_score_continuous)
+        self.__traffic_light_continuous = bool(config.traffic_light_continuous)
         self.__tl_red_below_frac = config.traffic_light_red_below_frac
         self.__tl_green_above_frac = config.traffic_light_green_above_frac
         _qs_paths = (config.quality_score_weights, config.quality_score_dino_weights)
@@ -241,12 +195,6 @@ class GuidancePipeline:
                   "pose-classifier only).")
 
         self.__lvef_predictor = LVEFPredictor(device=self.__device, weight_path=config.lvef_weights)
-        self.__executor = ThreadPoolExecutor(max_workers=2)
-        self.__lvef_future = None
-        # Per-stage wall-clock for the last run_inference call, in ms.
-        # Populated only when timing_enabled is True.
-        self.timing_enabled = False
-        self.last_timings: dict = {}
 
         # Wall-clock meter for the actual rate (Hz) at which frames are consumed
         # into the LVEF buffer, updated every classify_and_buffer call and
@@ -258,26 +206,10 @@ class GuidancePipeline:
         self.__lvef_buffer_fps_t0 = None
         self.__lvef_buffer_fps_window_s = 1.0
 
-
-    def _sync_for_timing(self):
-        if self.timing_enabled and self.__device.type == "cuda":
-            torch.cuda.synchronize()
-
     @property
     def probe_pose_available(self) -> bool:
         """True when the optional standard-view probe-pose predictor is loaded."""
         return self.__probe_pose_predictor is not None and self.__probe_pose_predictor.model is not None
-
-    @property
-    def probe_pose_filter_enabled(self) -> bool:
-        """True when ESKF smoothing of the probe-pose prediction is on."""
-        return self.__probe_pose_predictor is not None and self.__probe_pose_predictor.use_filter
-
-    def set_probe_pose_filter(self, enabled: bool) -> bool:
-        """Enable/disable ESKF smoothing of the probe-pose prediction. Returns new state."""
-        if self.__probe_pose_predictor is not None:
-            self.__probe_pose_predictor.set_filter_enabled(enabled)
-        return self.probe_pose_filter_enabled
 
     @property
     def quality_score_available(self) -> bool:
@@ -303,49 +235,6 @@ class GuidancePipeline:
         self.__quality_score_enabled = bool(enabled)
         self.__quality_score_pooler.clear()
         return self.__quality_score_enabled
-
-    @property
-    def traffic_light_continuous(self) -> bool:
-        """True when the border (either source) renders as a continuous gradient."""
-        return self.__traffic_light_continuous
-
-    def set_traffic_light_continuous(self, enabled: bool) -> bool:
-        """Switch BOTH borders between a continuous red->yellow->green gradient
-        and the discrete three-colour traffic light.
-
-        Source-agnostic and display-only (does not touch any predictor or
-        smoothing window), so it can be set regardless of which traffic-light
-        source is active or whether the quality model is loaded. Returns the
-        effective state.
-        """
-        self.__traffic_light_continuous = bool(enabled)
-        return self.__traffic_light_continuous
-
-    # Backwards-compatible aliases -- the continuous toggle is now source-agnostic
-    # (it used to be quality-only). Prefer the traffic_light_* names above.
-    @property
-    def quality_score_continuous(self) -> bool:
-        """Deprecated alias for ``traffic_light_continuous``."""
-        return self.__traffic_light_continuous
-
-    def set_quality_score_continuous(self, enabled: bool) -> bool:
-        """Deprecated alias for ``set_traffic_light_continuous``."""
-        return self.set_traffic_light_continuous(enabled)
-
-    def classify_quality(self, frame):
-        """Run the USGR quality-score classifier on a single grayscale frame.
-
-        Returns the raw ``QualityResult`` (continuous score + traffic-light
-        rgb), or None when the classifier is unavailable. Updates the smoothing
-        window as a side effect; the smoothed colour is available via
-        ``get_pooled_quality_rgb()``.
-        """
-        if not self.quality_score_available:
-            return None
-        result = self.__quality_score_predictor.predict(frame)
-        if result is not None:
-            self.__quality_score_pooler.add_score(result.score)
-        return result
 
     def get_pooled_quality_rgb(self):
         """Smoothed (windowed-mean-score) quality border colour, or None.
@@ -379,8 +268,6 @@ class GuidancePipeline:
             self.__pose_classifier_model,
             self.__device,
             frame,
-            None,
-            self.__pose_classifier_preprocess
         )
 
     def _buffer_frame(self, frame, pose_result):
@@ -517,25 +404,6 @@ class GuidancePipeline:
             return None
         return self.__probe_pose_predictor.predict(frame, target_view_index, timestamp)
 
-    def run_display(self, frame, target_view_index: int = 0, timestamp=None):
-        """Heavy path: landmark + rotation + probe-pose for display/guidance.
-
-        Deliberately excludes pose classification and the LVEF buffer push
-        (handled by ``classify_and_buffer``) so it can run off the critical
-        per-frame path. Callers that distribute these stages across their own
-        threads (e.g. the vigil cardiac node, which runs rotation on the IMU
-        thread) can call the granular predict_* methods directly instead.
-
-        Returns:
-            tuple: (cla, landmarks_tensor, rotation_prediction, probe_pose_prediction)
-        """
-        cla, landmarks_tensor = self.predict_landmarks(frame)
-        rotation_prediction = self.predict_rotation(frame)
-        probe_pose_prediction = self.predict_probe_pose(frame, target_view_index, timestamp)
-        return cla, landmarks_tensor, rotation_prediction, probe_pose_prediction
-
-    # --- LVEF pass-throughs (so external orchestrators need not reach into the
-    #     predictor or its buffer directly) ---
     def is_lvef_buffer_good(self) -> bool:
         """True when the LVEF buffer is full and clean enough to predict on."""
         return self.__lvef_predictor.is_buffer_video_good()
@@ -543,82 +411,3 @@ class GuidancePipeline:
     def run_lvef_prediction(self):
         """Run a synchronous LVEF prediction over the current buffer."""
         return self.__lvef_predictor.run_prediction()
-
-    def get_lvef_buffer_classifications(self):
-        """Per-frame PoseResults currently in the LVEF buffer (diagnostics)."""
-        return self.__lvef_predictor.get_buffer_classifications()
-
-    def run_inference(self, frame, target_view_index: int = 0, timestamp=None):
-        """Full per-frame pipeline (synchronous convenience).
-
-        Runs the fast classify->buffer step FIRST so the LVEF buffer is fed
-        before the heavier landmark/rotation/probe-pose work, then runs the
-        display pipeline. Callers that need the two paths decoupled across
-        threads should call ``classify_and_buffer()`` and ``run_display()``
-        directly (see the vigil cardiac node).
-        """
-        timing_on = self.timing_enabled
-        if timing_on:
-            self._sync_for_timing()
-            t0 = time.perf_counter()
-
-        # Fast path: traffic-light classify + LVEF buffer push (before the rest).
-        self.classify_and_buffer(frame)
-        if timing_on:
-            self._sync_for_timing()
-            t1 = time.perf_counter()
-
-        # Optional USGR quality classifier ("traffic light v2"). Skipped unless
-        # enabled (it runs a DINOv3 backbone, so we don't pay for it otherwise).
-        quality_score = None
-        quality_rgb = None
-        if self.quality_score_enabled:
-            quality_result = self.classify_quality(frame)
-            if quality_result is not None:
-                quality_score = quality_result.score
-                quality_rgb = self.get_pooled_quality_rgb()
-        if timing_on:
-            self._sync_for_timing()
-            t_quality = time.perf_counter()
-
-        # Heavy path: landmark + rotation + probe-pose.
-        cla, landmarks_tensor, rotation_prediction, probe_pose_prediction = \
-            self.run_display(frame, target_view_index, timestamp)
-        if timing_on:
-            self._sync_for_timing()
-            t2 = time.perf_counter()
-            self.last_timings = {
-                "classify_buf": (t1 - t0) * 1e3,
-                "quality": (t_quality - t1) * 1e3,
-                "display": (t2 - t_quality) * 1e3,
-            }
-
-        return GuidancePipelineOutput(
-            cla=cla,
-            landmarks_tensor=landmarks_tensor,
-            rotation_prediction=rotation_prediction,
-            pose_classification_prediction_rgb=self.get_pooled_pose_rgb(),
-            probe_pose_prediction=probe_pose_prediction,
-            quality_score=quality_score,
-            quality_rgb=quality_rgb,
-        )
-
-
-    def run_lvef_async(self) -> bool:
-        """Submit LVEF prediction to thread pool. Returns True if submitted."""
-        if not self.__lvef_predictor.is_buffer_video_good():
-            return False
-        if self.__lvef_future and not self.__lvef_future.done():
-            return False
-        self.__lvef_future = self.__executor.submit(self.__lvef_predictor.run_prediction)
-        return True
-
-
-    def get_latest_lvef(self):
-        """Get result if ready."""
-        if self.__lvef_future and self.__lvef_future.done():
-            try:
-                return self.__lvef_future.result()
-            except Exception as e:
-                print(f"[GuidancePipeline] LVEF error: {e}")
-        return None

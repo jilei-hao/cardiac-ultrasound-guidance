@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from .se3 import SE3, se3_exp, se3_log
+from .se3 import se3_exp, se3_log
 from .types import FilterState, PoseMeasurement
 
 

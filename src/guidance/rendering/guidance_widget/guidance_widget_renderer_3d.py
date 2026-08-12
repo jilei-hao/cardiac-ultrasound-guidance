@@ -80,9 +80,10 @@ _AXIS_RGB = {
 _PREDICTED_AXIS_ALPHA = 0.3
 
 
-# Legend label font + text blitting now live in ui/legend_text.py so the 2D
-# reticle panel draws its key with the same typeface and geometry helpers. The
-# module-level aliases keep this file's existing call sites unchanged.
+# Legend label font + text blitting now live in rendering/legend_text.py so
+# the 2D reticle panel draws its key with the same typeface and geometry
+# helpers. The module-level aliases keep this file's existing call sites
+# unchanged.
 _LEGEND_FONT_CANDIDATES = LEGEND_FONT_CANDIDATES
 _load_legend_font = load_legend_font
 _alpha_blit_rgba = alpha_blit_rgba
@@ -364,7 +365,7 @@ class GuidanceWidgetRenderer3D:
         # treated as noise and the arrow stays hidden.
         self.rotation_arrow_threshold_deg = 1.0
         # --- Translation guidance (USGR probe-pose T_rel) tunables ---
-        # Minimum |translation component| (metres, after amplification) for a
+        # Minimum |translation component| (meters, after amplification) for a
         # translation arrow to light. Below this the component is noise.
         self.translation_arrow_threshold_m = 0.005
         # Visual gain applied to the predicted translation before thresholding
@@ -1341,11 +1342,11 @@ class GuidanceWidgetRenderer3D:
             )
 
     def translation_prediction_to_body(self, translation_prediction: np.ndarray) -> np.ndarray:
-        """Map a USGR-frame T_rel (metres) into this renderer's IMU body frame.
+        """Map a USGR-frame T_rel (meters) into this renderer's IMU body frame.
 
         Applies the ``usgr_to_body`` axis sign/permutation then the visual
         ``translation_amplification`` gain. Returns a length-3 array
-        ``[t_x, t_y, t_z]`` in body-frame metres.
+        ``[t_x, t_y, t_z]`` in body-frame meters.
         """
         t = np.asarray(translation_prediction, dtype=float).reshape(3)
         return (self.usgr_to_body @ t) * self.translation_amplification
@@ -1357,7 +1358,7 @@ class GuidanceWidgetRenderer3D:
     ) -> None:
         """Drive translation arrow visibility from a predicted T_rel.
 
-        ``translation_prediction`` is the body-centric translation (metres,
+        ``translation_prediction`` is the body-centric translation (meters,
         USGR probe frame) from the current pose to the target standard view.
         It is mapped into the renderer body frame (:meth:`translation_prediction_to_body`)
         and decomposed onto the perpendicular-plane axes used by the
@@ -1772,8 +1773,8 @@ class GuidanceWidgetRenderer3D:
         pose = self._compute_center_bottom_pose()
 
         # Reuse the single configurable body material so the static reference
-        # body and the live SMPL body share one look (config.ini [Cardiac]
-        # body_mesh_color / metallic / roughness).
+        # body and the live SMPL body share one look (cardiac body-mesh ROS
+        # parameters).
         body_material = self._skin_material()
         self.renderer.add_node(
             "reference_body", body,
@@ -1980,7 +1981,7 @@ class GuidanceWidgetRenderer3D:
             input_frame_bgr: Input frame (ignored for fullscreen mode)
             qw, qx, qy, qz: Quaternion components for probe orientation
             predicted_rotation_matrix: Optional 3x3 predicted rotation correction matrix (raw prediction)
-            predicted_translation: Optional length-3 body-centric translation (metres,
+            predicted_translation: Optional length-3 body-centric translation (meters,
                 USGR probe frame) to the target standard view. Drives the translation
                 guidance arrows (and offsets the target-probe ghost). Pass ``None`` to
                 clear translation guidance.

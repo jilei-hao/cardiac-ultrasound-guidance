@@ -1,14 +1,12 @@
 # models/convnext_fpn.py
-import os
 import torch
 import torch.nn as nn
+
+from .. import DINOV3_REPO_DIR
 
 # -------------------------
 # Small conv-bn-relu block
 # -------------------------
-from .. import DINOV3_REPO_DIR
-
-
 class ConvBNAct(nn.Module):
     def __init__(self, c_in, c_out, k=3, s=1, p=1):
         super().__init__()
@@ -53,21 +51,24 @@ class HubConvNeXtFeatures(nn.Module):
     Wrap a ConvNeXt (loaded via torch.hub from local DINOv3 repo) to return
     [C2, C3, C4, C5] feature maps like timm(features_only=True).
     """
-    def __init__(self, weights: str | None = None, dinov3_repo_dir: str | None = None):
+    def __init__(self):
         super().__init__()
-        # Local DINOv3 repo path
-        if dinov3_repo_dir is None:
-            print("Using default DINOv3 repo path.")
-            repo_dir = DINOV3_REPO_DIR
         entry = "dinov3_convnext_base"
-        
-        assert os.path.isdir(repo_dir), f"repo_dir does not exist: {repo_dir}"
+
         # Load backbone from local repo (no internet, no pretrained weights)
         try:
-            self.model = torch.hub.load(repo_dir, entry, source='local', trust_repo=True, pretrained=False)
+            self.model = torch.hub.load(
+                DINOV3_REPO_DIR,
+                entry,
+                source='local',
+                trust_repo=True,
+                pretrained=False,
+            )
         except TypeError:
             # older torch without 'trust_repo' kwarg
-            self.model = torch.hub.load(repo_dir, entry, source='local', pretrained=False)
+            self.model = torch.hub.load(
+                DINOV3_REPO_DIR, entry, source='local', pretrained=False
+            )
 
         # The DINOv3 ConvNeXt model is already the backbone
         # No need to unwrap
@@ -77,29 +78,6 @@ class HubConvNeXtFeatures(nn.Module):
 
         # Estimate output channels (C2..C5) with a tiny dry run
         self._out_channels = self._infer_out_channels()
-
-    # --- utilities ---
-    def _first_stem_conv(self):
-        """
-        Find the first Conv2d in downsample_layers[0] (ConvNeXt stem).
-        """
-        m = self.model
-        if not hasattr(m, "downsample_layers"):
-            return None, None, None
-        stem = m.downsample_layers[0]
-        if isinstance(stem, nn.Sequential):
-            for idx, sub in enumerate(stem):
-                if isinstance(sub, nn.Conv2d):
-                    return stem, idx, sub
-        # fallback: search globally (rarely needed)
-        for name, mod in m.named_modules():
-            if isinstance(mod, nn.Conv2d):
-                parent = m
-                parent_idx = None
-                # not strictly necessary to return parent/idx in fallback
-                return parent, parent_idx, mod
-        return None, None, None
-
 
     def _forward_extract(self, x: torch.Tensor):
         """
@@ -157,13 +135,13 @@ class HubConvNeXtFeatures(nn.Module):
 # Main model (hub backbone + FPN)
 # -------------------------
 class ConvNeXtFPN(nn.Module):
-    def __init__(self, num_classes=5, hub_weights=None, dinov3_repo_dir: str | None = None):
+    def __init__(self, num_classes=5):
         """
         Load ConvNeXt from local DINOv3 repo via torch.hub.
         """
         super().__init__()
 
-        self.backbone = HubConvNeXtFeatures(weights=hub_weights, dinov3_repo_dir=dinov3_repo_dir)
+        self.backbone = HubConvNeXtFeatures()
         print("hub loaded")
 
         in_chs = self.backbone.feature_info.channels()
@@ -174,19 +152,3 @@ class ConvNeXtFPN(nn.Module):
         logits = self.decoder(feats)         # predict at P2
         logits = nn.functional.interpolate(logits, size=x.shape[-2:], mode='bilinear', align_corners=False)
         return logits
-
-    # Optional legacy hook — if you still want to try an extra encoder ckpt
-    def load_encoder_ckpt(self, ckpt_path):
-        sd = torch.load(ckpt_path, map_location='cpu')
-        if isinstance(sd, dict) and "state_dict" in sd:
-            sd = sd["state_dict"]
-        # best-effort partial load into hub backbone
-        target = getattr(self.backbone, "model", self.backbone)
-        tstate = target.state_dict()
-        new_sd, matched = {}, 0
-        for k, v in sd.items():
-            if not isinstance(v, torch.Tensor): continue
-            if k in tstate and tstate[k].shape == v.shape:
-                new_sd[k] = v; matched += 1
-        missing, unexpected = target.load_state_dict(new_sd, strict=False)
-        print(f"[load_encoder_ckpt] matched={matched} missing={len(missing)} unexpected={len(unexpected)}")

@@ -8,9 +8,9 @@ import threading
 import inference.landmark.landmark_prediction as lp
 # Import fourch_landmark pipeline
 from guidance.inference.fourch_landmark.fourch_landmark_pipeline import configure_fourch_landmark_pipeline, run_fourch_core_prediction
-import guidance.inference.pose_classification.pose_classification as pc
-from guidance.inference.pose_classification.pose_classification import PoseClassifierResultPooler
-import guidance.rendering.image_helpers as ih
+import inference.pose_classification as pc
+from inference.pose_classification import PoseClassifierResultPooler
+import ui.image_helpers as ih
 from guidance.rendering.guidance_widget import GuidanceWidgetRenderer3D
 from guidance.rendering.fourch_landmark_renderer import FourChamberLandmarkRenderer
 import guidance.inference.inference_helper as ihp

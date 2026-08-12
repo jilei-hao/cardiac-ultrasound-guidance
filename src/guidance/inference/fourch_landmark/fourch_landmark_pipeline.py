@@ -4,33 +4,21 @@
 Combines segmentation and landmark extraction for real-time processing.
 """
 
-import os
 import torch
 import cv2
 import numpy as np
 from typing import Tuple, List, Dict, Optional
-import tempfile
-import shutil
 
-# Import with absolute paths to avoid relative import issues
-import sys
-import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-from .echo_dataset import LABEL_VALUES
 from .convnext_fpn import ConvNeXtFPN
 from .qc_seg2landmarks import (
-    process_sequence,
-    intersect_labels,
     biggest_contour,
     sample_equally_spaced_points,
-    landmark_uncertainty,
     landmark_uncertainty_batch,
     compute_uncertainty_maps,
-    adjust_color_by_uncertainty,
-    color_for_label
 )
+
+
+LABEL_VALUES = [0, 50, 100, 150, 200]
 
 
 class FourChamberLandmarkPipeline:
@@ -41,9 +29,8 @@ class FourChamberLandmarkPipeline:
     3. Returns landmarks in the same format as the original landmark prediction
     """
     
-    def __init__(self, weight_path: str, device: str = "auto", img_size: int = 512, 
-                 landmarks_per_chamber: Optional[Dict[int, int]] = None,
-                dinov3_repo_dir: str | None = None):
+    def __init__(self, weight_path: str, device: str = "auto", img_size: int = 512,
+                 landmarks_per_chamber: Optional[Dict[int, int]] = None):
         """
         Initialize the pipeline.
         
@@ -70,10 +57,7 @@ class FourChamberLandmarkPipeline:
         print(f"Using device: {self.device}")
         
         # Initialize model
-        self.model = ConvNeXtFPN(
-            num_classes=len(LABEL_VALUES),
-            hub_weights=None
-        )
+        self.model = ConvNeXtFPN(num_classes=len(LABEL_VALUES))
         
         # Load checkpoint
         ckpt = torch.load(weight_path, map_location="cpu")
@@ -95,10 +79,6 @@ class FourChamberLandmarkPipeline:
         # (logits → NaN → argmax all-background → empty masks).
         self._amp = torch.device(self.device).type == "cuda"
 
-        # Initialize frame buffer for temporal consistency
-        self.frame_buffer = []
-        self.buffer_size = 3  # Use 3 frames for temporal consistency
-        
         # Landmark extraction parameters
         self.labels = [50, 100, 150, 200]  # Skip background (0)
         self.n_landmarks = 12
@@ -337,8 +317,7 @@ class FourChamberLandmarkPipeline:
 
 def configure_fourch_landmark_pipeline(weight_path: str = "weights/4ch-seg-251021.pt", 
                                        device: str = "auto",
-                                       landmarks_per_chamber: Optional[Dict[int, int]] = None,
-                                       dinov3_repo_dir: str | None = None) -> FourChamberLandmarkPipeline:
+                                       landmarks_per_chamber: Optional[Dict[int, int]] = None) -> FourChamberLandmarkPipeline:
     """
     Configure the 4-chamber landmark pipeline.
     
@@ -354,8 +333,7 @@ def configure_fourch_landmark_pipeline(weight_path: str = "weights/4ch-seg-25102
     return FourChamberLandmarkPipeline(
         weight_path,
         device, 
-        landmarks_per_chamber=landmarks_per_chamber, 
-        dinov3_repo_dir=dinov3_repo_dir
+        landmarks_per_chamber=landmarks_per_chamber,
     )
 
 

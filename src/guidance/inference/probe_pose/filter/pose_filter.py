@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from . import (
     SE3ErrorStateKF,

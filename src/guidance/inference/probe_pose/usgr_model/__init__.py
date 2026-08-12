@@ -12,7 +12,7 @@ Vendored files:
 
 Local modifications (see file headers):
     * dino.py / model.py: the DINOv3 backbone repo + weights are now passed in
-      explicitly so we reuse the dinov3 hub bundled at src/inference/dinov3/.
+      explicitly so we reuse the inference-only DINOv3 hub bundled with cardiac.
     * relative imports rewritten to this vendored package.
 """
 

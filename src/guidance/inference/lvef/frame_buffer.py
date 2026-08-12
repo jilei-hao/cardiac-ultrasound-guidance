@@ -2,21 +2,6 @@ import queue
 import threading
 import numpy as np
 
-from ..pose_classification.pose_classification import PoseResult
-
-
-def _as_pose_result(classifier_result):
-  """Normalize a classification into a PoseResult.
-
-  Accepts either a PoseResult (preferred) or a bare (R, G, B) rgb tuple from
-  legacy/transitional callers. A bare tuple is wrapped with score=NaN so that
-  ``is_video_good`` and diagnostics can always rely on ``.rgb`` / ``.score``.
-  """
-  if isinstance(classifier_result, PoseResult):
-    return classifier_result
-  return PoseResult(score=float("nan"), rgb=tuple(classifier_result))
-
-
 class ClassifiedFrame:
   """
   A class to represent a frame with its traffic-light classification result.
@@ -52,7 +37,6 @@ class FrameBuffer:
     self.lock = threading.Lock()  # Lock for thread-safe access
 
   def add_frame(self, frame, classifier_result):
-    pose_result = _as_pose_result(classifier_result)
     with self.lock:  # Acquire the lock
       if self.frame_queue.full():
         old_frame = self.frame_queue.get()  # Remove the oldest frame
@@ -60,7 +44,7 @@ class FrameBuffer:
         # print(f"Removed frame with dimensions: {old_frame.frame.shape}")
         del old_frame
 
-      self.frame_queue.put(ClassifiedFrame(frame, pose_result))  # Add the new frame
+      self.frame_queue.put(ClassifiedFrame(frame, classifier_result))
 
   def get_number_of_frames(self):
     with self.lock:  # Acquire the lock
@@ -70,16 +54,6 @@ class FrameBuffer:
     with self.lock:  # Acquire the lock
       frame_array = list(self.frame_queue.queue)
       return np.array([frame.frame for frame in frame_array])
-
-  def get_all_classifications(self):
-    """Return the per-frame PoseResult for every frame currently buffered.
-
-    Useful for troubleshooting (e.g. logging the score/colour distribution
-    the LVEF model is actually seeing at prediction time).
-    """
-    with self.lock:
-      return [cf.classifier_result for cf in list(self.frame_queue.queue)]
-
 
   def is_video_good(self):
     """

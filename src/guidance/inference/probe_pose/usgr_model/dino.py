@@ -2,17 +2,9 @@
 
 Vendored from USGR ``usgr/encoder/dino.py``.
 
-Vendoring notes
----------------
-* No functional change to the class. The constructor already accepts ``repo_path``
-  and ``weights_path``; the cardiac-ultrasound-guidance wrapper
-  (``probe_pose_predictor.py``) passes both explicitly so we reuse the dinov3
-  hub bundled at ``src/inference/dinov3/`` and a locally-stored
-  ``dinov3_convnext_base`` weights file -- the absolute training-box paths in
-  ``MODEL_CONFIGS`` below are kept only for reference and are NOT used when
-  ``weights_path`` is supplied.
-* ``embed_dim`` is still looked up from ``MODEL_CONFIGS`` (correct for the
-  vendored 'dinov3_convnext_base' = 1024).
+The cardiac wrapper supplies both the inference-only DINOv3 hub path and the
+local ViT-L weights path. Training-only model variants and machine-specific
+fallback paths are intentionally omitted.
 """
 
 import contextlib
@@ -20,7 +12,6 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 import warnings
-from pathlib import Path
 
 
 class DinoEncoder(nn.Module):
@@ -34,62 +25,11 @@ class DinoEncoder(nn.Module):
     IMAGENET_MEAN = (0.485, 0.456, 0.406)
     IMAGENET_STD = (0.229, 0.224, 0.225)
 
-    # Model name -> config mapping (weights_path, depth, embed_dim).
-    # NOTE: the 'weights' paths point at the original USGR training box and are
-    # only used as a fallback when ``weights_path`` is not passed explicitly.
-    # Note: For ConvNeXt models, 'depth' refers to the number of stages (4 for all ConvNeXt)
+    # Only the backbone used by the deployed probe-pose and quality checkpoints.
     MODEL_CONFIGS = {
-        # ViT models
-        'dinov3_vits16': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_vits16_pretrain_lvd1689m-08c60483.pth',
-            'depth': 12,
-            'embed_dim': 384,
-        },
-        'dinov3_vits16plus': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth',
-            'depth': 12,
-            'embed_dim': 384,
-        },
-        'dinov3_vitb16': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
-            'depth': 12,
-            'embed_dim': 768,
-        },
         'dinov3_vitl16': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth',
             'depth': 24,
             'embed_dim': 1024,
-        },
-        'dinov3_vith16plus': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth',
-            'depth': 32,
-            'embed_dim': 1280,
-        },
-        'dinov3_vit7b16': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth',
-            'depth': 40,
-            'embed_dim': 4096,
-        },
-        # ConvNeXt models
-        'dinov3_convnext_tiny': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth',
-            'depth': 4,
-            'embed_dim': 768,
-        },
-        'dinov3_convnext_small': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_convnext_small_pretrain_lvd1689m-296db49d.pth',
-            'depth': 4,
-            'embed_dim': 768,
-        },
-        'dinov3_convnext_base': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_convnext_base_pretrain_lvd1689m-801f2ba9.pth',
-            'depth': 4,
-            'embed_dim': 1024,
-        },
-        'dinov3_convnext_large': {
-            'weights': '/data/trevor/usgr/dinov3_weights/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth',
-            'depth': 4,
-            'embed_dim': 1536,
         },
     }
 
@@ -108,7 +48,7 @@ class DinoEncoder(nn.Module):
         self,
         model_name: str = 'dinov3_vitl16',
         weights_path: "str | Path | None" = None,
-        repo_path: "str | Path" = '../dinov3',  # clone dinov3 repo into the parent of usgr
+        repo_path: "str | Path" = '../dinov3',
         patch_size: int = 16,
         image_size: int = 1024,
         output_layers: "list[int] | None" = None,
@@ -140,9 +80,8 @@ class DinoEncoder(nn.Module):
 
         config = self.MODEL_CONFIGS[model_name]
 
-        # Use provided weights_path or look up from config
         if weights_path is None:
-            weights_path = config['weights']
+            raise ValueError("DINOv3 weights_path is required")
 
         # Use provided output_layers or default to last layer
         if output_layers is None:

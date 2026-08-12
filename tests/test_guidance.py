@@ -22,7 +22,7 @@ from ui.image_window import create_dual_window_setup
 from data_access.simulator import FrameDataSimulator
 from guidance.rendering.guidance_widget import GuidanceWidgetRenderer3D
 from guidance.rendering.fourch_landmark_renderer import FourChamberLandmarkRenderer
-import guidance.rendering.image_helpers as ih
+import ui.image_helpers as ih
 from guidance.inference.guidance_pipeline import GuidancePipeline, GuidancePipelineConfig
 
 try:

@@ -4,7 +4,6 @@
 # the terms of the DINOv3 License Agreement.
 
 import logging
-from functools import partial
 from typing import Dict, List, Optional, Sequence, Union
 
 import numpy as np
@@ -305,36 +304,3 @@ class ConvNeXt(nn.Module):
             return tuple(zip(outputs, class_tokens))
         return tuple(outputs)
 
-
-convnext_sizes = {
-    "tiny": dict(
-        depths=[3, 3, 9, 3],
-        dims=[96, 192, 384, 768],
-    ),
-    "small": dict(
-        depths=[3, 3, 27, 3],
-        dims=[96, 192, 384, 768],
-    ),
-    "base": dict(
-        depths=[3, 3, 27, 3],
-        dims=[128, 256, 512, 1024],
-    ),
-    "large": dict(
-        depths=[3, 3, 27, 3],
-        dims=[192, 384, 768, 1536],
-    ),
-}
-
-
-def get_convnext_arch(arch_name):
-    size_dict = None
-    query_sizename = arch_name.split("_")[1]
-    try:
-        size_dict = convnext_sizes[query_sizename]
-    except KeyError:
-        raise NotImplementedError("didn't recognize vit size string")
-
-    return partial(
-        ConvNeXt,
-        **size_dict,
-    )

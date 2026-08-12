@@ -1,29 +1,23 @@
-import os
 import torch
-import torch.nn as nn
-import numpy as np
 from torchvision import transforms
 from PIL import Image
 import cv2
 
 from .dinov3_convnext import load_backbone_from_local_hub, infer_feat_dim, DINOConvNeXt6DDual
 from .rotmat import rot6d_to_matrix
+from .. import DINOV3_REPO_DIR
 
 class RotationPredictor:
     """Real-time rotation prediction for ultrasound frames"""
     
-    def __init__(self, config_path, checkpoint_path, device, dinov3_repo_dir: str | None = None):
+    def __init__(self, config_path, checkpoint_path, device):
         self.device = device
         self.config_path = config_path
         self.checkpoint_path = checkpoint_path
         self.model = None
         self.transform = None
         
-        if dinov3_repo_dir is None:
-            print("[RotationPredictor] Using default DINOv3 repo path.")
-            self.dinov3_repo_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dinov3")
-        else:
-            self.dinov3_repo_dir = dinov3_repo_dir
+        self.dinov3_repo_dir = DINOV3_REPO_DIR
 
         self._load_model()
 

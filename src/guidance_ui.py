@@ -23,7 +23,7 @@ from guidance.inference.guidance_pipeline import GuidancePipelineConfig, Guidanc
 from guidance.inference.probe_pose import NUM_VIEWS, view_list_for
 from data_access.screen_capture.screen_capture import ScreenCapture
 from ui.image_window import create_window_row
-from guidance.rendering.image_helpers import add_rgb_border_to_result, draw_text_on_frame
+from ui.image_helpers import add_rgb_border_to_result, draw_text_on_frame
 from guidance.rendering.guidance_widget.guidance_widget_renderer_3d import GuidanceWidgetRenderer3D
 from guidance.rendering.reticle import ReticleRenderer
 from guidance.rendering.fourch_landmark_renderer import FourChamberLandmarkRenderer
