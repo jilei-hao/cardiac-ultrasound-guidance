@@ -17,9 +17,13 @@ discrete<->continuous toggle apply to either model:
         fraction >= green_above_frac  -> green
         else                          -> yellow
 
-  3. Continuous mode interpolates red->yellow->green across the fraction, with
-     pure yellow at the midpoint of the ``[red_below_frac, green_above_frac]``
-     band so the gradient stays aligned with the discrete cut-points.
+  3. Continuous mode interpolates red->yellow->green ACROSS THE SAME BAND the
+     discrete cut-points define: solid red below ``red_below_frac``, solid green
+     at or above ``green_above_frac``, and the gradient in between with pure
+     yellow at the band's midpoint. The two modes therefore agree on what is red
+     and what is green and differ only in how sharply the middle is drawn --
+     and the two thresholds mean the same thing in both, which is what makes
+     them tunable while the gradient is on.
 
 The defaults ``(1/3, 2/3)`` reproduce the thresholds that used to be hard-coded
 per model: with the quality range ``[-3, 3]`` they recover its ``-1``/``+1``
@@ -74,19 +78,35 @@ def fraction_to_continuous_rgb(
     red_below_frac: float = DEFAULT_RED_BELOW_FRAC,
     green_above_frac: float = DEFAULT_GREEN_ABOVE_FRAC,
 ) -> tuple:
-    """Interpolate red->yellow->green smoothly across a 0..1 quality fraction.
+    """Interpolate red->yellow->green across the band the cut-points define.
 
-    Pure yellow sits at the midpoint of the ``[red_below_frac, green_above_frac]``
-    band so the gradient and the discrete cut-points agree on where 'marginal'
-    is. The fraction is clamped to ``[0, 1]``.
+    Outside the band the colour is SOLID: red below ``red_below_frac``, green at
+    or above ``green_above_frac``, exactly where the discrete mode puts them.
+    Only the middle is a gradient, with pure yellow at the band's midpoint.
+
+    This is what makes the two thresholds tunable in continuous mode. An earlier
+    version spread the gradient over the whole 0..1 range and used the cut-points
+    only to locate yellow, so widening or narrowing the band did nothing -- every
+    pair with the same average produced an identical border -- and at the
+    discrete red boundary the colour was already two-thirds of the way to yellow.
+
+    The fraction is clamped to ``[0, 1]``. Red is tested first, so a caller that
+    passes an inverted pair gets the same answer the discrete mode gives.
     """
     t = min(1.0, max(0.0, frac))
-    mid = min(1.0, max(0.0, (red_below_frac + green_above_frac) / 2.0))
+    if t < red_below_frac:
+        return _GRAD_RED
+    if t >= green_above_frac:
+        return _GRAD_GREEN
+    # Only reachable when green_above_frac > red_below_frac: a band of zero or
+    # negative width leaves no t that fails both tests above, so the midpoint
+    # below cannot divide by zero.
+    mid = (red_below_frac + green_above_frac) / 2.0
     if t <= mid:
-        u = (t / mid) if mid > 0.0 else 1.0
-        return _lerp_rgb(_GRAD_RED, _GRAD_YELLOW, u)
-    u = ((t - mid) / (1.0 - mid)) if mid < 1.0 else 0.0
-    return _lerp_rgb(_GRAD_YELLOW, _GRAD_GREEN, u)
+        return _lerp_rgb(_GRAD_RED, _GRAD_YELLOW,
+                         (t - red_below_frac) / (mid - red_below_frac))
+    return _lerp_rgb(_GRAD_YELLOW, _GRAD_GREEN,
+                     (t - mid) / (green_above_frac - mid))
 
 
 def score_to_border_rgb(
