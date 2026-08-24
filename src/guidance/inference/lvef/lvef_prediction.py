@@ -71,6 +71,15 @@ class LVEFPredictor:
         """
         return self._frame_buffer.is_video_good() # this should not be in frame buffer
 
+    def reset_buffer(self):
+        self._frame_buffer.clear()
+
+    def is_buffer_full(self):
+        return self._frame_buffer.is_full()
+
+    def capture_progress(self):
+        return self._frame_buffer.capture_progress()
+
     def run_prediction(self):
         """
         Run LVEF prediction on a video matrix.

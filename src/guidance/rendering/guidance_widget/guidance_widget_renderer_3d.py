@@ -76,8 +76,36 @@ _AXIS_RGB = {
     "y": (0.2, 1.0, 0.2),   # green — perpendicular plane (lateral)
     "z": (0.2, 0.2, 1.0),   # blue  — perpendicular plane (back-of-probe)
 }
-# Opacity of the semi-transparent "predicted" axes (BLEND alpha).
-_PREDICTED_AXIS_ALPHA = 0.3
+# Dash pattern for the "predicted"/target axes. Single source of truth shared by
+# the 3D dashed shafts (``_axis_shaft``) and the 2D legend swatch
+# (``_draw_dashed_bar``), for the same reason as ``_AXIS_RGB`` above: the key
+# must not be able to drift from the thing it labels. It had drifted -- the
+# legend drew dashes while the axes rendered as translucent solids, so the key
+# described a cue that was never on screen.
+#
+# Three long dashes rather than many short ones. Dash geometry is baked into the
+# shaft, so the dashes rotate WITH the axis and can never crawl along it -- the
+# shimmer that had ruled dashes out for the live axes is a screen-space-dash
+# failure, and this is not one. What does remain is foreshortening: an axis
+# pointing near the camera compresses its dashes toward the pixel grid, and only
+# a chunky pattern survives that at the 256 px the widget is rendered at. Here
+# each dash is ~20% of the shaft.
+_PREDICTED_DASHES = 3
+_PREDICTED_DASH_GAP_RATIO = 0.975   # gap length as a fraction of dash length
+
+
+def _dash_spans(length: float, n: int = _PREDICTED_DASHES,
+                gap_ratio: float = _PREDICTED_DASH_GAP_RATIO) -> list:
+    """``(start, size)`` pairs for ``n`` dashes tiling ``length``.
+
+    ``n`` dashes separated by ``n - 1`` gaps of ``gap_ratio`` x dash, spanning
+    exactly ``length`` from the first dash's start to the last one's end. Unit
+    agnostic on purpose: called in metres for the 3D shafts and in pixels for
+    the legend swatch, so the two render the same proportions at any size.
+    """
+    dash = length / (n + (n - 1) * gap_ratio)
+    step = dash * (1.0 + gap_ratio)
+    return [(i * step, dash) for i in range(n)]
 
 
 # Legend label font + text blitting now live in rendering/legend_text.py so
@@ -264,7 +292,7 @@ class GuidanceWidgetRenderer3D:
         self.reference_body_units = reference_body_units
         self.reference_body_scale_ratio = float(reference_body_scale_ratio)
 
-        # --- Live patient geometry (Stevens point cloud + SMPL mesh) ---
+        # --- Live patient geometry (SMPL mesh + probe contact) ---
         # Inputs arrive on the ROS subscription thread via the set_* methods
         # below; all pyrender scene mutation happens on the render thread in
         # ``_apply_live_geometry`` (called from render_widget). The lock only
@@ -280,11 +308,16 @@ class GuidanceWidgetRenderer3D:
                 'xyz', live_geometry_rotation_euler_deg, degrees=True
             ).as_matrix()
         self._live_lock = threading.Lock()
-        self._live_point_cloud = None      # (points Nx3 world m, colors or None)
         self._live_body = None             # (vertices Nx3 world m, faces Fx3)
         self._probe_world_pos = None       # (3,) probe tip in world m, or None
-        self._pc_dirty = False
         self._body_dirty = False
+        # Set when the host supplies patient axes (set_calibration_body_axes),
+        # or on calibrate/reset; drained by the render thread, which owns
+        # re-posing the reference body. ``_pending_body_orientation`` carries an
+        # explicit 3x3 to use, or None meaning "recompute from the best
+        # available axes".
+        self._body_orientation_dirty = False
+        self._pending_body_orientation: Optional[np.ndarray] = None
         self._probe_dirty = False
         # world->scene 4x4 (auto-fit from the SMPL mesh extents so the body
         # sits where the static reference used to). None until first body.
@@ -330,7 +363,6 @@ class GuidanceWidgetRenderer3D:
             "guidance_arrows": True,
             "target_probe": False,
             "reference_body": True,
-            "world_pcl": True,
             "contact_marker": True,
         }
         # Stored at load time so the layer toggle can swap between the
@@ -617,21 +649,47 @@ class GuidanceWidgetRenderer3D:
             x_length=self.x_axis_length_m,
             x_from_tail=self.x_axis_from_tail,
         )
-        # Create predicted axes (semi-transparent version)
+        # Predicted axes: same geometry, broken into dashes. Opaque, and dashed
+        # rather than faded, because that is what the legend's "Target" row
+        # draws -- see _PREDICTED_DASHES.
         self.predicted_axes = self._create_axes_cylinders(
             length=self.axes_length_m,
             y_length=self.y_axis_length_m,
             radius=self.axes_radius_m,
             x_length=self.x_axis_length_m,
             x_from_tail=self.x_axis_from_tail,
+            dashed=True,
         )
+
+    @staticmethod
+    def _axis_shaft(radius: float, height: float, dashed: bool):
+        """A shaft of ``height``, centred on the origin along local +Z.
+
+        Solid, or broken into ``_PREDICTED_DASHES`` co-linear dashes occupying
+        exactly the same extent -- so every caller's existing rotate/translate
+        lands a dashed shaft precisely where the solid one went, and the two
+        axis sets stay directly comparable on screen.
+        """
+        if not dashed:
+            return trimesh.creation.cylinder(radius=radius, height=height)
+        segments = []
+        for start, size in _dash_spans(height):
+            seg = trimesh.creation.cylinder(radius=radius, height=size)
+            seg.apply_transform(create_translation_matrix(
+                0, 0, -height / 2.0 + start + size / 2.0))
+            segments.append(seg)
+        return trimesh.util.concatenate(segments)
 
     def _create_axes_cylinders(self, length: float = 1.0,
                                y_length: Optional[float] = None,
                                radius: float = 0.02,
                                x_length: Optional[float] = None,
-                               x_from_tail: bool = False) -> dict:
-        """Create coordinate axes as trimesh cylinder objects."""
+                               x_from_tail: bool = False,
+                               dashed: bool = False) -> dict:
+        """Create coordinate axes as trimesh cylinder objects.
+
+        ``dashed`` breaks each shaft into dashes without moving its endpoints.
+        """
         axes = {}
         y_len = float(y_length) if y_length is not None else length
         x_len = float(x_length) if x_length is not None else length
@@ -640,7 +698,7 @@ class GuidanceWidgetRenderer3D:
         # origin along +X (toward the imaging tip). With ``x_from_tail`` it starts
         # at the probe tail (-X end) and extends further out along -X, so the shaft
         # stretches clear of the probe body instead of being occluded by it.
-        x_shaft = trimesh.creation.cylinder(radius=radius, height=x_len)
+        x_shaft = self._axis_shaft(radius, x_len, dashed)
         x_shaft.apply_transform(create_rotation_matrix('y', np.pi/2))
         if x_from_tail:
             tail = float(self.probe_long_axis_length_m or 0.0)
@@ -652,13 +710,13 @@ class GuidanceWidgetRenderer3D:
 
         # Y-axis (green) - cylinder extending from origin along +Y. Often
         # rendered longer than X/Z so it pokes out past the probe body.
-        y_shaft = trimesh.creation.cylinder(radius=radius, height=y_len)
+        y_shaft = self._axis_shaft(radius, y_len, dashed)
         y_shaft.apply_transform(create_rotation_matrix('x', -np.pi/2))
         y_shaft.apply_transform(create_translation_matrix(0, y_len/2, 0))
         axes['y'] = y_shaft
 
         # Z-axis (blue) - cylinder extending from origin along +Z
-        z_shaft = trimesh.creation.cylinder(radius=radius, height=length)
+        z_shaft = self._axis_shaft(radius, length, dashed)
         z_shaft.apply_transform(create_translation_matrix(0, 0, length/2))
         axes['z'] = z_shaft
 
@@ -693,24 +751,26 @@ class GuidanceWidgetRenderer3D:
                 metallicFactor=0.3,
                 roughnessFactor=0.6
             ),
-            # Semi-transparent versions for predicted axes (same hues, low alpha).
+            # Predicted axes: same hues, OPAQUE. "Predicted" is carried by the
+            # dashed shaft geometry (see _PREDICTED_DASHES), which is what the
+            # legend's "Target" row draws. Fading was the old cue and it stacked
+            # badly -- a 0.3-alpha axis over the body mesh washed out to nearly
+            # the body's own colour, so the cue that matters most when the probe
+            # is far from target was the faintest thing on screen.
             'x_predicted': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[*_AXIS_RGB['x'], _PREDICTED_AXIS_ALPHA],
+                baseColorFactor=[*_AXIS_RGB['x'], 1.0],
                 metallicFactor=0.3,
                 roughnessFactor=0.6,
-                alphaMode='BLEND'
             ),
             'y_predicted': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[*_AXIS_RGB['y'], _PREDICTED_AXIS_ALPHA],
+                baseColorFactor=[*_AXIS_RGB['y'], 1.0],
                 metallicFactor=0.3,
                 roughnessFactor=0.6,
-                alphaMode='BLEND'
             ),
             'z_predicted': pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[*_AXIS_RGB['z'], _PREDICTED_AXIS_ALPHA],
+                baseColorFactor=[*_AXIS_RGB['z'], 1.0],
                 metallicFactor=0.3,
                 roughnessFactor=0.6,
-                alphaMode='BLEND'
             ),
             # Guidance arrows: low-roughness + slight metallic so each
             # surface picks up its own specular highlight, helping the
@@ -777,10 +837,13 @@ class GuidanceWidgetRenderer3D:
         self.renderer.add_node("y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y']))
         self.renderer.add_node("z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z']))
 
-        # Add predicted axes (semi-transparent)
-        self.renderer.add_node("predicted_x_axis", pyrender.Mesh.from_trimesh(self.axes['x'], material=self.materials['x_predicted']))
-        self.renderer.add_node("predicted_y_axis", pyrender.Mesh.from_trimesh(self.axes['y'], material=self.materials['y_predicted']))
-        self.renderer.add_node("predicted_z_axis", pyrender.Mesh.from_trimesh(self.axes['z'], material=self.materials['z_predicted']))
+        # Add predicted axes (opaque, dashed). These take self.predicted_axes,
+        # NOT self.axes: the dashed geometry was already being built and then
+        # dropped on the floor here, so the predicted nodes rendered the solid
+        # shafts and the only thing distinguishing them was the alpha.
+        self.renderer.add_node("predicted_x_axis", pyrender.Mesh.from_trimesh(self.predicted_axes['x'], material=self.materials['x_predicted']))
+        self.renderer.add_node("predicted_y_axis", pyrender.Mesh.from_trimesh(self.predicted_axes['y'], material=self.materials['y_predicted']))
+        self.renderer.add_node("predicted_z_axis", pyrender.Mesh.from_trimesh(self.predicted_axes['z'], material=self.materials['z_predicted']))
 
     def _setup_guidance_arrows(self):
         """Create the 4 translation + 4 rotation guidance arrow nodes.
@@ -971,9 +1034,8 @@ class GuidanceWidgetRenderer3D:
             )
         # Live-geometry layers are (re)applied on the render thread; mark
         # them dirty so the toggle takes effect on the next frame.
-        if name in ("reference_body", "world_pcl", "contact_marker"):
+        if name in ("reference_body", "contact_marker"):
             with self._live_lock:
-                self._pc_dirty = True
                 self._body_dirty = True
                 self._probe_dirty = True
 
@@ -994,26 +1056,6 @@ class GuidanceWidgetRenderer3D:
     # ------------------------------------------------------------------
     # Live patient geometry API (thread-safe; cache only, no scene mutation)
     # ------------------------------------------------------------------
-    def set_world_point_cloud(self, points, colors=None) -> None:
-        """Cache the latest Stevens VGGT point cloud (world meters).
-
-        Args:
-            points: (N, 3) array of point positions in the world/RealSense
-                frame, or None to clear the cloud.
-            colors: Optional (N, 3)/(N, 4) per-point colours (uint8 0-255 or
-                float 0-1).
-        Safe to call from the ROS subscription thread.
-        """
-        with self._live_lock:
-            if points is None:
-                self._live_point_cloud = None
-            else:
-                self._live_point_cloud = (
-                    np.asarray(points, dtype=np.float32).reshape(-1, 3),
-                    None if colors is None else np.asarray(colors),
-                )
-            self._pc_dirty = True
-
     def set_reference_body_mesh(self, vertices, faces) -> None:
         """Cache the latest live SMPL body mesh (world meters).
 
@@ -1051,7 +1093,7 @@ class GuidanceWidgetRenderer3D:
                 else np.asarray(transform, dtype=float).reshape(4, 4)
             )
             self.auto_fit_live_geometry = False
-            self._pc_dirty = self._body_dirty = self._probe_dirty = True
+            self._body_dirty = self._probe_dirty = True
 
     # ------------------------------------------------------------------
     # Live patient geometry — render-thread application
@@ -1096,18 +1138,30 @@ class GuidanceWidgetRenderer3D:
         if self.renderer is None:
             return
         with self._live_lock:
-            pc_dirty, body_dirty, probe_dirty = (
-                self._pc_dirty, self._body_dirty, self._probe_dirty
-            )
-            if not (pc_dirty or body_dirty or probe_dirty):
+            orientation_dirty = self._body_orientation_dirty
+            pending_orientation = self._pending_body_orientation
+            self._body_orientation_dirty = False
+            self._pending_body_orientation = None
+        if orientation_dirty:
+            # Patient axes arrived (or were cleared), or the operator
+            # calibrated: re-lay the STATIC reference body. Independent of the
+            # live-geometry flags below -- the reference body is precisely what
+            # shows when there is no live body to be dirty.
+            self._body_orientation_world = (
+                pending_orientation if pending_orientation is not None
+                else self._capture_body_world_orientation())
+            self._apply_reference_body_pose()
+
+        with self._live_lock:
+            body_dirty, probe_dirty = self._body_dirty, self._probe_dirty
+            if not (body_dirty or probe_dirty):
                 return
-            point_cloud = self._live_point_cloud
             body = self._live_body
             probe_world = (
                 None if self._probe_world_pos is None
                 else self._probe_world_pos.copy()
             )
-            self._pc_dirty = self._body_dirty = self._probe_dirty = False
+            self._body_dirty = self._probe_dirty = False
 
         # --- SMPL body mesh ---
         if body_dirty:
@@ -1140,19 +1194,8 @@ class GuidanceWidgetRenderer3D:
                     self._live_body_active = False
                 self._apply_reference_body_pose()
 
-        # --- world point cloud ---
-        if pc_dirty:
-            show_pc = self._layers_visible["world_pcl"]
-            if point_cloud is not None and show_pc:
-                pts, cols = point_cloud
-                self.renderer.set_point_cloud(
-                    "world_pcl", self._world_to_scene_points(pts), colors=cols,
-                )
-            else:
-                self.renderer.remove_node("world_pcl", quiet=True)
-
         # --- contact marker (probe tip -> closest point on body) ---
-        if body_dirty or probe_dirty or pc_dirty:
+        if body_dirty or probe_dirty:
             self._update_contact_marker(probe_world)
 
     def _skin_material(self):
@@ -1531,17 +1574,42 @@ class GuidanceWidgetRenderer3D:
         self._apply_reference_body_pose()
 
     def _capture_body_world_orientation(self) -> np.ndarray:
-        """Build a 3x3 body-axes-in-world matrix from the current view.
+        """Build a 3x3 body-axes-in-world matrix.
 
         Body-local axes: +Y head, +Z front (face), +X body-left.
-        The body lies on its back, so head points along the projected
-        camera-right (``_world_head_direction``) and face points world up.
-        ``+X = +Y × +Z`` keeps the basis right-handed.
+
+        Prefers the PATIENT's own axes when the host has supplied them via
+        :meth:`set_calibration_body_axes` -- the host knows where the patient
+        actually lies (e.g. from a bed-plane fit); the renderer only knows where
+        the camera is. Orienting the reference body by those is what makes its
+        long axis parallel to the axis the calibrated probe is aimed along,
+        because :meth:`_compute_calibration_target_world` uses the same pair.
+        The two used to disagree -- that one honoured the supplied axes and this
+        one did not -- leaving a calibrated probe and the reference body apart by
+        the angle between the patient's head direction and the camera (75 deg at
+        the cardiac widget's shipped view).
+
+        Without supplied axes there is nothing better than the view itself: the
+        body lies on its back with the head along the projected camera-right
+        (:meth:`_world_head_direction`) and the face along world up.
+        ``+X = +Y × +Z`` keeps the basis right-handed either way.
         """
-        head_dir = self._world_head_direction()
-        world_up = np.array([0.0, 1.0, 0.0])
-        body_y = head_dir
-        body_z = world_up
+        if self.calibration_head_dir_world is not None:
+            body_y = np.asarray(self.calibration_head_dir_world, dtype=float)
+            body_z = np.asarray(self.calibration_up_world, dtype=float)
+        else:
+            body_y = self._world_head_direction()
+            body_z = np.array([0.0, 1.0, 0.0])
+        body_y = body_y / (np.linalg.norm(body_y) + 1e-12)
+        # Re-orthogonalize the front axis against the head axis rather than
+        # trusting the caller: two independently-derived directions need not be
+        # exactly perpendicular, and a skewed basis is not a rotation -- it
+        # would shear the mesh. The HEAD axis is kept exact, so the body's long
+        # axis stays parallel to the calibration target's.
+        body_z = body_z - body_y * float(np.dot(body_z, body_y))
+        n = float(np.linalg.norm(body_z))
+        if n > 1e-9:
+            body_z = body_z / n
         body_x = np.cross(body_y, body_z)
         n = float(np.linalg.norm(body_x))
         if n > 1e-9:
@@ -1677,6 +1745,13 @@ class GuidanceWidgetRenderer3D:
         else:
             self.calibration_head_dir_world = np.asarray(head_dir_world, float).reshape(3)
             self.calibration_up_world = np.asarray(up_world, float).reshape(3)
+        # The reference body is oriented from these too, so it has to be
+        # re-laid when they arrive -- otherwise it keeps the construction-time
+        # camera-relative orientation until the operator happens to calibrate.
+        # CACHE ONLY: this is called from the host's pose callback, and posing a
+        # scene node belongs to the render thread (see _apply_live_geometry).
+        with self._live_lock:
+            self._body_orientation_dirty = True
 
     def calibrate(self, qw: float = 1.0, qx: float = 0.0,
                   qy: float = 0.0, qz: float = 0.0):
@@ -1701,13 +1776,13 @@ class GuidanceWidgetRenderer3D:
         # the two world frames disagreed (e.g., IMU +Z up vs render +Y up).
         self.calibration_matrix = R_target @ R_imu.T
 
-        # Re-freeze the reference body's orientation against the world axes
-        # implied by the calibration view (head along the projected
-        # camera-right, face up along world +Y). The body had a
-        # construction-time freeze; this overwrites it with the
-        # operator's chosen calibration view.
-        self._body_orientation_world = self._capture_body_world_orientation()
-        self._apply_reference_body_pose()
+        # Re-freeze the reference body's orientation against the same axes this
+        # calibration targeted, so the two agree. Deferred rather than applied:
+        # this runs on whichever thread services the host's calibrate request,
+        # and posing a scene node belongs to the render thread.
+        with self._live_lock:
+            self._pending_body_orientation = None      # recompute
+            self._body_orientation_dirty = True
 
         print(
             f"✅ Probe calibrated (q=[{qw:.3f}, {qx:.3f}, "
@@ -1717,11 +1792,19 @@ class GuidanceWidgetRenderer3D:
     def reset_calibration(self):
         """Drop any prior calibration; render raw IMU rotation again."""
         self.calibration_matrix = np.eye(3)
-        if self._default_body_orientation_world is not None:
-            self._body_orientation_world = (
-                self._default_body_orientation_world.copy()
-            )
-            self._apply_reference_body_pose()
+        # Revert the reference body to its construction-time freeze ONLY when
+        # the body was oriented from the view in the first place. Supplied
+        # patient axes are a measurement of where the patient lies, not a
+        # by-product of calibrating, so dropping the calibration must not swing
+        # the body off them -- that would put it back at odds with the very next
+        # calibrate. Deferred for the same thread reason as calibrate().
+        with self._live_lock:
+            self._pending_body_orientation = (
+                None if self.calibration_head_dir_world is not None
+                else (self._default_body_orientation_world.copy()
+                      if self._default_body_orientation_world is not None
+                      else None))
+            self._body_orientation_dirty = True
         print("↩️  Probe calibration reset.")
 
     def _setup_reference_body(self):
@@ -1957,11 +2040,26 @@ class GuidanceWidgetRenderer3D:
         # Ensure rotation_matrix is 3x3
         rotation_3x3 = rotation_matrix[:3, :3] if rotation_matrix.shape == (4, 4) else rotation_matrix
         
-        # Extract rotation angles and amplify
-        r = R.from_matrix(rotation_3x3)
-        angles = r.as_euler('xyz', degrees=True)
-        exaggerated_angles = angles * self.rotation_amplification
-        exaggerated_matrix = R.from_euler('xyz', exaggerated_angles, degrees=True).as_matrix()
+        # Amplify about the correction's OWN axis, via its rotation vector.
+        #
+        # This used to scale the three 'xyz' Euler components independently,
+        # which is not a magnitude gain: Euler angles do not commute, so
+        # multiplying each by k moves the AXIS as well as the angle. Measured
+        # over 400 random axes per magnitude at k=5, the axis drifted 9 deg at a
+        # 10 deg correction, 18 deg at 20 deg and 53 deg at 45 deg -- so the
+        # ghost probe pointed somewhere qualitatively different from the 2D
+        # reticle, which consumes the same prediction unamplified.
+        #
+        # Worse, the resulting magnitude was not monotonic in the input: it
+        # peaked near 143 deg at a 30 deg correction and FELL to 111 deg at
+        # 60 deg, so a worse probe pose could show a SMALLER ghost rotation and
+        # the cue lost even its qualitative "getting warmer" reading.
+        #
+        # A rotation vector scales exactly -- same axis, angle times k -- which
+        # is what "amplification" was always meant to be.
+        rotvec = R.from_matrix(rotation_3x3).as_rotvec()
+        exaggerated_matrix = R.from_rotvec(
+            rotvec * self.rotation_amplification).as_matrix()
         
         # Apply inverse transformation
         exaggerated_inverse = np.linalg.inv(exaggerated_matrix)
@@ -1996,8 +2094,8 @@ class GuidanceWidgetRenderer3D:
         if timing_on:
             t0 = time.perf_counter()
 
-        # Apply any pending live patient geometry (Stevens point cloud +
-        # SMPL body + contact marker). No-op unless a setter marked it dirty.
+        # Apply any pending SMPL body/contact geometry. No-op unless a setter
+        # marked it dirty.
         self._apply_live_geometry()
 
         # Convert quaternion to rotation matrix (returns 4x4)
@@ -2151,7 +2249,7 @@ class GuidanceWidgetRenderer3D:
         rendered_frame_bgra = cv2.cvtColor(color, cv2.COLOR_RGBA2BGRA)
 
         # Overlay legend only when the predicted-axes layer is on. The
-        # legend's bottom row keys the translucent predicted-axis colors,
+        # legend's bottom row keys the dashed predicted-axis colors,
         # so it has no referent once those axes are hidden — and the 'x'
         # hotkey toggles current + predicted axes together, so dropping
         # the legend with them keeps the widget uncluttered.
@@ -2187,26 +2285,18 @@ class GuidanceWidgetRenderer3D:
                          color: tuple) -> None:
         """Draw a horizontal dashed bar (filled dashes + gaps) in ``frame``.
 
-        Used for the "Predicted" legend row: a dashed swatch reads as
-        "predicted / not-yet-there" far more legibly than the old faded
-        translucent block, while staying crisp (it's a static key, so the
-        dash-shimmer that rules dashes out for the live 3D axes never applies).
+        Used for the "Target" legend row: a dashed swatch reads as
+        "predicted / not-yet-there" far more legibly than a faded block.
 
-        Fixed at three dashes with an airy gap so the "predicted" cue stays
-        unambiguous rather than reading as a near-solid bar.
+        Pattern comes from the shared ``_dash_spans``, so this swatch and the 3D
+        dashed shafts are the same proportions by construction rather than by
+        two constants that happen to agree.
         """
-        n_dashes = 3
-        gap_ratio = 0.975   # gap as a fraction of dash length (>0.5 = airier)
-        dash = max(2, int(round(w / (n_dashes + (n_dashes - 1) * gap_ratio))))
-        gap = max(2, int(round(dash * gap_ratio)))
-        cx = x
-        for _ in range(n_dashes):
-            seg = min(dash, x + w - cx)
-            if seg <= 0:
-                break
-            cv2.rectangle(frame, (cx, y), (cx + seg, y + h), color, -1,
+        for start, size in _dash_spans(float(w)):
+            sx = x + int(round(start))
+            sw = max(1, int(round(size)))
+            cv2.rectangle(frame, (sx, y), (sx + sw, y + h), color, -1,
                           cv2.LINE_AA)
-            cx += dash + gap
 
     def _draw_guidance_legend(self, frame_bgra: np.ndarray) -> None:
         """Draw the axis legend directly onto the BGRA widget frame.
@@ -2217,7 +2307,7 @@ class GuidanceWidgetRenderer3D:
 
         Two labelled rows, one swatch per axis colour:
           * "Current" — solid bars  → the opaque current-pose axes.
-          * "Target"  — dashed bars → the translucent predicted-pose axes.
+          * "Target"  — dashed bars → the opaque, dashed predicted-pose axes.
         Labels use a friendly TrueType font (see ``_load_legend_font``) so the
         legend reads as a clinical UI, not an engineering plot. All geometry is
         proportional to frame size so it stays consistent across the

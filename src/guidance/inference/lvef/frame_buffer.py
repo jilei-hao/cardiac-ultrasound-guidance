@@ -33,18 +33,31 @@ class FrameBuffer:
   """
   def __init__(self, buffer_size: int):
     self.buffer_size = buffer_size
+    self.minimum_acceptable_frames = int(buffer_size * 0.8) + 1
     self.frame_queue = queue.Queue(maxsize=buffer_size)
+    self.acceptable_frames = 0
     self.lock = threading.Lock()  # Lock for thread-safe access
+
+  @staticmethod
+  def _is_acceptable(classified_frame):
+    return classified_frame.classifier_result.rgb in {
+      (0, 255, 0), (255, 255, 0)
+    }
 
   def add_frame(self, frame, classifier_result):
     with self.lock:  # Acquire the lock
       if self.frame_queue.full():
         old_frame = self.frame_queue.get()  # Remove the oldest frame
+        if self._is_acceptable(old_frame):
+          self.acceptable_frames -= 1
         # print old frame dimensions
         # print(f"Removed frame with dimensions: {old_frame.frame.shape}")
         del old_frame
 
-      self.frame_queue.put(ClassifiedFrame(frame, classifier_result))
+      classified_frame = ClassifiedFrame(frame, classifier_result)
+      self.frame_queue.put(classified_frame)
+      if self._is_acceptable(classified_frame):
+        self.acceptable_frames += 1
 
   def get_number_of_frames(self):
     with self.lock:  # Acquire the lock
@@ -54,6 +67,22 @@ class FrameBuffer:
     with self.lock:  # Acquire the lock
       frame_array = list(self.frame_queue.queue)
       return np.array([frame.frame for frame in frame_array])
+
+  def clear(self):
+    with self.lock:
+      self.frame_queue = queue.Queue(maxsize=self.buffer_size)
+      self.acceptable_frames = 0
+
+  def is_full(self):
+    with self.lock:
+      return self.frame_queue.full()
+
+  def capture_progress(self):
+    with self.lock:
+      return (
+        self.frame_queue.qsize(), self.acceptable_frames,
+        self.buffer_size, self.minimum_acceptable_frames
+      )
 
   def is_video_good(self):
     """
@@ -68,13 +97,4 @@ class FrameBuffer:
       if self.frame_queue.qsize() < self.buffer_size:
         return False
 
-      # Example: Green + Yellow > 90% and Green > 30%
-      green_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result.rgb == (0, 255, 0))
-      yellow_count = sum(1 for frame in self.frame_queue.queue if frame.classifier_result.rgb == (255, 255, 0))
-      total_count = self.frame_queue.qsize()
-
-      pct_yellow = yellow_count / total_count * 100
-      pct_green = green_count / total_count * 100
-
-
-      return (pct_yellow + pct_green) > 80
+      return self.acceptable_frames >= self.minimum_acceptable_frames

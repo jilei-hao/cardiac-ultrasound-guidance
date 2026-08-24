@@ -408,6 +408,18 @@ class GuidancePipeline:
         """True when the LVEF buffer is full and clean enough to predict on."""
         return self.__lvef_predictor.is_buffer_video_good()
 
+    def is_lvef_buffer_full(self) -> bool:
+        """True when a complete LVEF clip has been collected."""
+        return self.__lvef_predictor.is_buffer_full()
+
+    def reset_lvef_buffer(self) -> None:
+        """Start a fresh LVEF clip."""
+        self.__lvef_predictor.reset_buffer()
+
+    def get_lvef_capture_progress(self):
+        """Return total and acceptable frame counts and their requirements."""
+        return self.__lvef_predictor.capture_progress()
+
     def run_lvef_prediction(self):
         """Run a synchronous LVEF prediction over the current buffer."""
         return self.__lvef_predictor.run_prediction()
